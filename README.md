@@ -1,3 +1,3 @@
 # Come Down
 
-An Obsidian plugin for caching embedded external images.
+An Obsidian plugin that caches embedded external images to your local machine.
