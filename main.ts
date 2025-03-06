@@ -1,5 +1,5 @@
 import { MarkdownView, Plugin, editorLivePreviewField, editorInfoField, MarkdownFileInfo, MarkdownPostProcessorContext, Notice, debounce, normalizePath } from "obsidian";
-import { SettingTab, SettingsManager } from "src/SettingTab";
+import { SETTING_NAME, SettingTab, SettingsManager } from "src/SettingTab";
 import { CacheManager, CacheMetadataItem, CacheResourceType } from "src/CacheManager";
 import { EditorView, ViewUpdate } from "@codemirror/view";
 
@@ -9,19 +9,28 @@ export default class PluginImplementation extends Plugin {
 
 	async onload() {
 
-		const pluginDir = this.manifest.dir;
-		if (!pluginDir) {
-			const errorMsg = `${this.manifest.name}: Cannot load because plugin directory is unknown`;
-			new Notice(errorMsg, 0);
-			throw new Error(errorMsg);
-		}
-		this.cacheManager = new CacheManager(this.app, pluginDir + "/cache");
+		//#region Settings 
 
 		this.settingsManager = new SettingsManager(
 			await this.loadData(),
 			async (settings) => await this.saveData(settings),
+			(name) => {
+				if (name === SETTING_NAME.gitIgnoreCacheDir)
+					this.ensureCacheDir();
+			}
 		);
 		this.addSettingTab(new SettingTab(this, this.settingsManager));
+		
+		//#endregion
+		
+		//#region Cache 
+		
+		this.cacheManager = new CacheManager(this.app, this.cacheDir);
+		this.ensureCacheDir();
+		
+		//#endregion
+
+		//#region Register 
 
 		// The post processor runs after the Markdown has been processed into HTML. It lets you add, remove, or replace HTML elements to the rendered document.
 		this.registerMarkdownPostProcessor((element, context) => {
@@ -53,10 +62,48 @@ export default class PluginImplementation extends Plugin {
 				}
 			}
 		});
+
+		//#endregion
 	}
 
 	onunload() {
 		this.cacheManager?.cancelAllOngoing();
+	}
+
+	/**
+	 * Will be set once it's ensured that `this.manifest.dir` is set. 
+	 * @throws {Error} - If this.manifest.dir isn't set.
+	 */
+	get cacheDir(): string {
+		if (this._cacheDir === undefined) {
+			const pluginDir = this.manifest.dir;
+			if (pluginDir) {
+				this._cacheDir = `${pluginDir}/cache`;
+			}
+			else {
+				const errorMsg = `${this.manifest.name}: Cannot load because plugin directory is unknown`;
+				new Notice(errorMsg);
+				throw new Error(errorMsg);
+			}
+		}
+		return this._cacheDir;
+	}
+	_cacheDir: string | undefined;
+
+	async ensureCacheDir() {
+		const ensureGitIgnore = this.settingsManager.settings.gitIgnoreCacheDir;
+
+		const cacheFolderExists = await this.app.vault.adapter.exists(this.cacheDir);
+		if (!cacheFolderExists)
+			await this.app.vault.adapter.mkdir(this.cacheDir);
+
+		const gitignorePath = `${this.cacheDir}/.gitignore`;
+		const gitignoreExists = await this.app.vault.adapter.exists(gitignorePath);
+
+		if (ensureGitIgnore && !gitignoreExists)
+			await this.app.vault.adapter.write(gitignorePath, "*");
+		else if (!ensureGitIgnore && gitignoreExists)
+			await this.app.vault.adapter.remove(gitignorePath);
 	}
 
 	processLivePreview(update: ViewUpdate) {
@@ -100,7 +147,7 @@ export default class PluginImplementation extends Plugin {
 
 		imageElements
 			.filter((imageElement => imageElement.src.length > 0)) // In case src hasn't been set yet.
-			.filter((imageElement) => imageElement.dataset.comeDownCacheInitiated !== "true" ) // Avoid stampede.
+			.filter((imageElement) => imageElement.dataset.comeDownCacheInitiated !== "true") // Avoid stampede.
 			.forEach((imageElement) => {
 
 				const metadata: CacheMetadataItem = {
@@ -110,11 +157,11 @@ export default class PluginImplementation extends Plugin {
 				};
 
 				const originalAltText = imageElement.alt;
-				
+
 				imageElement.alt = "Loading...";
 				imageElement.dataset.comeDownCacheInitiated = "true";
 				imageElement.src = `data:image/svg+xml;charset=utf-8,${PluginImplementation.ENCODED_LOADING_ICON}`;
-				
+
 				console.log(`handleImage: ${metadata.key}, alt: ${originalAltText}`);
 
 				this.cacheManager.getCache(metadata, (result) => {
