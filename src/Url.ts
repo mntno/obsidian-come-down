@@ -3,36 +3,41 @@
 export class Url {
 
   /**
-   * These are case-sensitive. Use {@link normalizedHeaders} to be safer.
+   * These are case-sensitive. Use with {@link normalizedHeaders}.
    */
-  public static readonly RESPONSE_HEADER = {
-    contentType: "Content-Type",
-    contentLength: "Content-Length",
-    cacheControl: "Cache-Control",
-    expires: "Expires",
-  };
-
   public static readonly RESPONSE_HEADER_LOWERCASE = {
-    contentType: Url.RESPONSE_HEADER.contentType.toLowerCase(),
-    contentLength: Url.RESPONSE_HEADER.contentLength.toLowerCase(),
-    cacheControl: Url.RESPONSE_HEADER.cacheControl.toLowerCase(),
-    expires: Url.RESPONSE_HEADER.expires.toLowerCase(),
-  };
+    contentType: "Content-Type".toLowerCase(),
+    contentLength: "Content-Length".toLowerCase(),
+    cacheControl: "Cache-Control".toLowerCase(),
+    expires: "Expires".toLowerCase(),
+  } as const;
+
+  public static readonly CACHE_CONTROL_LOWERCASE = {
+    noStore: "no-store",
+  } as const;
 
   /**
    * Normalize headers to make sure to, e.g., find both `Content-Type` and `content-type`.
+   * Also ignores empty strings and trims.
    */
   public static normalizeHeaders(headers: Record<string, string>): Record<string, string> {
     const normalizedHeaders: Record<string, string> = {};
+
     for (const key in headers)
-      normalizedHeaders[key.toLowerCase()] = headers[key];
+      if (key.length > 0)
+        normalizedHeaders[key.toLowerCase().trim()] = headers[key];
+
     return normalizedHeaders;
   }
 
-   /**
-   * @author Gemini   
+  public static isValid(url: string): boolean {
+    return url && URL.canParse(url) ? true : false;
+  }
+
+  /**
+   * These are not relevant: ftp, mailto, tel, ws: and wss:   
    */
-   public static isExternal(src: string): boolean {
+  public static isExternal(src: string): boolean {
     try {
       const url = new URL(src);
       return url.protocol === "http:" || url.protocol === "https:";
@@ -41,12 +46,25 @@ export class Url {
     }
   }
 
+  public static isEmbedded(url: string): boolean {
+    return this.isBlob(url) || url.startsWith("data:");
+  }
+
+  public static isBlob(url: string): boolean {
+    return url.startsWith("blob:"); // Note: no slashes
+  }
+
+  public static isLocal(url: string): boolean {
+    // Slashes are better: e.g., "app:data" or "file:info" are not URLs.
+    return url.startsWith("app://") || url.startsWith("capacitor://") || url.startsWith("file://");
+  }
+
   /**
    * @author Gemini
    * @param url 
    * @returns 
    */
-  public static extractFilenameAndExtension(url: string): { filename: string, extension: string} | null {
+  public static extractFilenameAndExtension(url: string): { filename: string, extension: string } | null {
     try {
       const urlObj = new URL(url);
       const pathname = urlObj.pathname;

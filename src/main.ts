@@ -1,16 +1,18 @@
-import { MarkdownView, Plugin, editorLivePreviewField, MarkdownPostProcessorContext, normalizePath, Platform, FileView, TFile } from "obsidian";
-import { SettingTab, SettingsManager, PluginSettings } from "src/Settings";
-import { CacheManager, CacheRequest } from "src/CacheManager";
 import { EditorView, ViewUpdate } from "@codemirror/view";
-import { Log, Notice, ENV } from "src/Environment";
-import { HTMLElementAttribute, HTMLElementCacheState, HtmlAssistant } from "src/HtmlAssistant";
-import { GetCacheKey } from "./CacheMetadata";
+import { Plugin, MarkdownPostProcessorContext, normalizePath, TFile } from "obsidian";
+import { SettingTab, SettingsManager, PluginSettings } from "Settings";
+import { CacheFetchError, CacheItem, CacheManager, CacheRequest, CacheTypeError } from "CacheManager";
+import { Log, Notice, ENV, clearBrowserCache } from "Environment";
+import { HTMLElementAttribute, HTMLElementCacheState, HtmlAssistant } from "HtmlAssistant";
+import { InfoModal } from "InfoModal";
+import { ProcessingPass } from "ProcessingPass";
+import { Url } from "Url";
 
 interface PluginData {
 	settings: PluginSettings;
 }
 
-export const DEFAULT_DATA: PluginData = {
+const DEFAULT_DATA: PluginData = {
 	settings: SettingsManager.DEFAULT_SETTINGS,
 } as const;
 
@@ -21,94 +23,100 @@ export default class ComeDownPlugin extends Plugin {
 
 	async onload() {
 
+		//#region Init
+
+		//const startTime = performance.now();
+
 		Notice.setName(this.manifest.name);
 
 		this.data = Object.assign({}, DEFAULT_DATA, await this.loadData());
 
-		//#region Settings 
+		await this.ensureCacheDir();
+		await this.ensureGitIgnore();
+
+		this.cacheManager = await CacheManager.create(this.app.vault, this.cacheDir, this.cacheMetadataPath, [this.gitIgnorePath]);
 
 		this.settingsManager = new SettingsManager(
 			this.data.settings,
 			async (_settings) => await this.saveData(this.data),
 			(name) => {
 				if (name === SettingsManager.SETTING_NAME.gitIgnoreCacheDir)
-					this.ensureCacheDir();
+					this.ensureGitIgnore();
 			}
 		);
-		this.addSettingTab(new SettingTab(this, this.settingsManager));
+		this.addSettingTab(new SettingTab(this, this.settingsManager, this.cacheManager));
 
-		//#endregion
-
-		//#region Cache 
-
-		this.cacheManager = new CacheManager(this.app.vault, this.cacheDir);
-		this.ensureCacheDir();
+		//console.log(`ComeDown: init: ${performance.now() - startTime} milliseconds`);
 
 		//#endregion
 
 		//#region Register 
 
-		// The post processor runs after the Markdown has been processed into HTML. It lets you add, remove, or replace HTML elements to the rendered document.		
-		this.registerMarkdownPostProcessor((e, c) => this.processReadingMode(e, c));
-
+		this.registerMarkdownPostProcessor((e, c) => this.postProcessReadingModeHtml(e, c));
 		this.registerEditorExtension(EditorView.updateListener.of((vu) => this.editorViewUpdateListener(vu)));
 
-		this.addCommand({
-			id: "clear-all-cache",
-			name: "Clear All Cached Files",
-			callback: async () => {
-				await this.cacheManager.clearCached([this.gitIgnorePath], (error) => {
-					if (error) {
-						new Notice(`An error occured while clearing the cache: ${error.message}`, 0);
-						console.error(`Error clearing cache: ${error}`);
-					}
-					else {
-						new Notice(`Cache cleared.`);
-						if (ENV.dev && Platform.isDesktopApp) {
-							require('electron').remote.session.defaultSession.clearCache()
-								.then(() => {
-									new Notice('Electron Cache cleared successfully. Restart vault.');
-								})
-								.catch((error: any) => {
-									console.error('Error clearing cache:', error);
-								});
-						}
-					}
-				});
-			}
-		});
+		this.registerEvent(
+			this.app.vault.on('delete', (file) => {
+				if (file instanceof TFile) {
+					this.cacheManager.removeRetainer(file.path).then(() => this.cacheManager.saveMetadataIfDirty());
+				}
+			})
+		);
 
-		// this.addCommand({
-		// 	id: 'redownload-all-images-in-this-file',
-		// 	name: 'Redownload all images in this file.',
-		// 	checkCallback: (checking: boolean) => {
-		// 		const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-		// 		if (markdownView) {
-		// 			if (!checking) {
-		// 			}
-		// 			return true;
-		// 		}
-		// 	}
-		// });
+		this.registerEvent(
+			this.app.vault.on('rename', (file, oldPath) => {
+				if (file instanceof TFile) {
+					this.cacheManager.renameRetainer(oldPath, file.path);
+					this.cacheManager.saveMetadataIfDirty();
+				}
+			})
+		);
+
+		if (ENV.dev) {
+
+			this.addCommand({
+				id: "open-info-modal",
+				name: "Open Cacheboard",
+				callback: () => {
+					new InfoModal(this.app, this.cacheManager, this.settingsManager.settings).open();
+				}
+			});
+
+			this.addCommand({
+				id: "delete-all-cache-and-reload",
+				name: "Delete cache and reload",
+				callback: () => {
+					this.cacheManager.clearCached((error) => {
+						if (error)
+							console.error("Failed to clear cache", error);
+						else
+							clearBrowserCache(this.app);
+					});
+				}
+			});
+		}
 
 		//#endregion
+
 	}
 
 	async onunload() {
 		await this.cacheManager?.cancelAllOngoing();
 	}
 
-	//#region Cache
+	//#region Cache Init
 
 	/**
 	 * Will be set once it's ensured that `this.manifest.dir` is set. 
-	 * @throws {Error} - If this.manifest.dir isn't set.
+	 * @throws {Error} If `this.manifest.dir` isn't set.
 	 */
 	get cacheDir(): string {
 		if (this.cacheDirBacking === undefined) {
 			const pluginDir = this.manifest.dir;
 			if (pluginDir) {
-				this.cacheDirBacking = `${pluginDir}/cache`;
+				this.cacheDirBacking = normalizePath(`${pluginDir}/cache`);
+				this.gitIgnorePath = normalizePath(`${this.cacheDirBacking}/.gitignore`);
+				this.cacheMetadataPath = normalizePath(`${pluginDir}/cache.json`);
 			}
 			else {
 				const errorMsg = `Cannot load because plugin directory is unknown`;
@@ -118,24 +126,27 @@ export default class ComeDownPlugin extends Plugin {
 		}
 		return this.cacheDirBacking;
 	}
-	private cacheDirBacking: string | undefined;
+	private cacheDirBacking?: string;
+	private gitIgnorePath: string;
+	private cacheMetadataPath: string;
 
-	get gitIgnorePath() {
-		if (!this.gitIgnorePathBacking)
-			this.gitIgnorePathBacking = normalizePath(`${this.cacheDir}/.gitignore`);
-		return this.gitIgnorePathBacking;
-	}
-	private gitIgnorePathBacking: string | undefined;
-
+	/**
+	 * Ensures the cache directory exists.  
+	 *  
+	 * Do not catch {@link Error}s so as to prevent the plugin from being enabled in such cases.  
+	 */
 	async ensureCacheDir() {
-		const ensureGitIgnore = this.settingsManager.settings.gitIgnoreCacheDir;
-
 		const cacheFolderExists = await this.app.vault.adapter.exists(this.cacheDir);
 		if (!cacheFolderExists)
 			await this.app.vault.adapter.mkdir(this.cacheDir);
+	}
 
+	/**
+	 * Make sure a `.gitignore` file is added/removed.
+	 */
+	async ensureGitIgnore() {
+		const ensureGitIgnore = this.data.settings.gitIgnoreCacheDir;
 		const gitignoreExists = await this.app.vault.adapter.exists(this.gitIgnorePath);
-
 		if (ensureGitIgnore && !gitignoreExists)
 			await this.app.vault.adapter.write(this.gitIgnorePath, "*");
 		else if (!ensureGitIgnore && gitignoreExists)
@@ -144,293 +155,305 @@ export default class ComeDownPlugin extends Plugin {
 
 	//#endregion
 
-	//#region 
-
-	private isInLivePreviewFromView(view: FileView) {
-		const state = view?.getState();
-		return state ? state.mode == "source" && state.source == false : false;
-	}
-
-	private isInSourceModeFromView(view: FileView) {
-		const state = view?.getState();
-		return state ? state.mode == "source" && state.source == true : false;
-	}
-
-	private inLivePreviewFromEditorView(view: EditorView) {
-		return view.state.field(editorLivePreviewField);
-	}
-
-	private getEditorRoot(element: HTMLElement): HTMLElement | null {
-		let currentElement: HTMLElement | null = element;
-
-		while (currentElement) {
-			if (currentElement.classList.contains("view-content")) {
-				return currentElement;
-			}
-			currentElement = currentElement.parentElement as HTMLElement | null;
-		}
-
-		return null; // Root not found
-	}
+	//#region Processing
 
 	/**
+	 * Remove requesting, downloading, done, and invalid.
+	 * - The done image element is already pointing to the cached resource. No need to do anything more.
+	 * - Those that are downloading will be handled as the download finishes as part of a previous pass.
 	 * 
-	 * @param view 
-	 * @returns true if file is open in Reading view.
-	 */
-	private isInReadingViewFromView(view: FileView): boolean {
-		return view?.getState().mode == "preview"; // "source"
-	}
-
-	private viewModeString(fileView: FileView, editorView: EditorView | undefined = undefined) {
-		return this.isInReadingViewFromView(fileView) ? "Reading view (reading)" : "Live preview (editing)";
-		//if (editorView)
-		//	Log(`\t${!this.inLivePreviewFromEditorView(editorView) ? `Reading view (reading)` : `Live preview (editing)`}`)
-	}
-
-	/**
-	 * Call first in system callbacks to abort as early as possible.
-	 * @param context 
-	 * @returns Do nothing further if `null`.
-	 */
-	private proceed(context?: MarkdownPostProcessorContext): { markdownView: MarkdownView, associatedFile: TFile } | null {
-		const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-
-		if (!markdownView) {
-			Log(`\tSkipping because no active view.`);
-			return null;
-		}
-
-		if (this.isInSourceModeFromView(markdownView)) {
-			Log(`\tSkipping because in source mode.`);
-			return null;
-		}
-
-		// if (ENV.usePostProcessor && this.isInReadingViewFromView(markdownView)) {
-		// 	Log(`\tSkipping because in Reading view.`);
-		// 	return null;
-		// }
-
-		const associatedFile = markdownView.file; // == this.app.workspace.getActiveFile()
-		if (!associatedFile) {
-			Log(`\tSkipping because in no associated file.`);
-			return null;
-		}
-
-		if (context && associatedFile.path != context.sourcePath) {
-			console.warn(`\tExpected \`getActiveFile().path\` be equal to \`sourcePath\` of \`MarkdownPostProcessorContext\``)
-			return null;
-		}
-
-		return { markdownView, associatedFile: associatedFile };
-	}
-	
-	/**
-	 * Finds the relevant html elements under {@link element} then aims to further filter out those that are unwanted.
+	 * Keep
+	 * - Original: these need to be cancelled 
+	 * - Cancelled and Failed: these need to request cache.
 	 * 
-	 * @param element 
+	 * @param imageElement 
 	 * @returns 
 	 */
-	private imageElements(element: HTMLElement): HTMLImageElement[] {
+	private filterIrrelevantCacheStates(imageElement: HTMLImageElement) {
 
-		// Note that if the `src` attribute is used for an svg icon this method will regard it as relevant and return it. But it will be filtered when the state is checked.
-		let imageElements = HtmlAssistant.findAllRelevantImages(element);
-		
-		if (imageElements.length == 0) {
-			Log(`\tAborting: Found no relevant image elements.`)			
-			return imageElements;
-		} 
-		else
-			Log(`\tNumber of relevant image elements: ${imageElements.length}`);
+		const state = HtmlAssistant.cacheState(imageElement)
 
-		imageElements = imageElements.filter((imageElement) => {
-			const state = HtmlAssistant.cacheState(imageElement)
-			Log(`\tCache state: ${state}`);
-			return state != HTMLElementCacheState.CACHE_SUCCEEDED && state != HTMLElementCacheState.CACHE_REQUESTED;
-		});
+		// return HtmlAssistant.isCacheStateEqual(state, [
+		// 	HTMLElementCacheState.ORIGINAL, 
+		// 	HTMLElementCacheState.ORIGINAL_SRC_REMOVED, 
+		// 	HTMLElementCacheState.CACHE_FAILED
+		// ]);
 
-		if (imageElements.length == 0)
-			Log(`\tAborting: All relevant images are either already using cache or are waiting for it.`)
-
-		return imageElements;
+		// Difference between this and the above is that ORIGINAL matches all unprocessed elements.
+		return !HtmlAssistant.isCacheStateEqual(state, [
+			HTMLElementCacheState.REQUESTING,
+			HTMLElementCacheState.REQUESTING_DOWNLOADING,
+			HTMLElementCacheState.CACHE_SUCCEEDED,
+			HTMLElementCacheState.INVALID
+		]);
 	}
 
 	private editorViewUpdateListener(update: ViewUpdate) {
-		Log(`editorViewUpdateListener`)
-		
-		const proceed = this.proceed();
-		if (!proceed)
-			return;
 
-		Log(`\t${this.viewModeString(proceed.markdownView, update.view)}`);
+		const processingPass = ProcessingPass.beginFromViewUpdate(this.app, update, () => {
+			// There is no file to work with. All that can be done is to cancel loading all external urls.
+			const imageElements = HtmlAssistant.findRelevantImagesToProcess(update.view.contentDOM, true, (imageElement) => {
+				const src = imageElement.getAttribute(HTMLElementAttribute.SRC);
+				return src !== null && Url.isValid(src) && Url.isExternal(src);
+			});
+			HtmlAssistant.cancelImageLoading(imageElements);
+		});
 
-		const imageElements = this.imageElements(update.view.contentDOM);
-		if (imageElements.length == 0)
-			return;		
-		
-		if (ENV.processOnAllViewUpdateChanges || (update.docChanged || update.viewportChanged || update.geometryChanged)) {
-			if (!ENV.processOnAllViewUpdateChanges)
-				Log(`\tdocChanged: ${update.docChanged}\n\tviewportChanged: ${update.viewportChanged}\n\tselectionSet: ${update.selectionSet}\n\tfocusChanged: ${update.focusChanged}\n\tgeometryChanged: ${update.geometryChanged}\n\theightChanged: ${update.heightChanged}`);
+		if (processingPass) {
 
-			this.handleImages(HtmlAssistant.preparedImageElements(imageElements), proceed.associatedFile);
-		}
-		else {
-			if (!ENV.processOnAllViewUpdateChanges)
-				Log(`\tskipped \`handleImages\`: \n\tviewportChanged: ${update.viewportChanged}\n\tselectionSet: ${update.selectionSet}\n\tfocusChanged: ${update.focusChanged}\n\tgeometryChanged: ${update.geometryChanged}\n\theightChanged: ${update.heightChanged}`);
+			// Elements in DOM at this stage might be in states in which the `src` attribute has been removed. Therefore the `src` attribute is not required when finding image elements.
+			const imageElements = HtmlAssistant.findRelevantImagesToProcess(update.view.contentDOM, false, (imageElement) => {
+				const src = imageElement.getAttribute(HTMLElementAttribute.SRC);
+
+				// 1. The user is editing the link (causing the source attribute to change) which resets the element's state.
+				//    External urls are only accepted in the element's original state.
+				if (update.docChanged && src && Url.isExternal(src) && HtmlAssistant.cacheState(imageElement) != HTMLElementCacheState.ORIGINAL)
+					HtmlAssistant.resetElement(imageElement); // Set state to "untouched".
+				
+				// 2. As all images are retained in each pass, even though elements that are already cached are excluded from further processing, they still need to be retained.
+				if (HtmlAssistant.cacheState(imageElement) == HTMLElementCacheState.CACHE_SUCCEEDED) {
+					const src = HtmlAssistant.originalSrc(imageElement);
+					console.assert(src !== null, "Expected original source dataset");
+					if (src)
+						processingPass.retainCacheFromRequest({ source: src, requesterPath: processingPass.associatedFile.path });
+				}
+				
+				// 3. Start filtering: If the image element has a src, only keep external urls; if not, keep all.
+				let isSrcOk = src !== null ? Url.isValid(src) && Url.isExternal(src) : true;
+
+				// 4. If the url was ok, then remove all states that have passed this stage already.
+				return isSrcOk && this.filterIrrelevantCacheStates(imageElement);
+			});
+
+			if (imageElements.length > 0) {
+				HtmlAssistant.cancelImageLoading(imageElements);
+				this.requestCache(imageElements, processingPass);
+			}
+			else {
+				// Special case when the user deletes an existing embed and all other image elements were filtered out: there are either no other embeds or all the other are already done.
+				if (update.docChanged)
+					processingPass.end(this.cacheManager);
+				else
+					processingPass.abort();
+			}
 		}
 	}
 
 	/**
+	 * - Will not be called if never in Read mode since there's no need to render Markdown.
+	 * - In Read mode, it will always be called after the update listener, {@link editorViewUpdateListener}, as it might make changes.
 	 * 
-	 * @param element A chunk of html.
+	 * @param element A chunk of HTML.
 	 * @param context 
 	 */
-	processReadingMode(element: HTMLElement, context: MarkdownPostProcessorContext) {
-		Log(`processReadingMode`)
-		
-		const proceed = this.proceed(context);
-		if (!proceed)
-			return;
-		
-		Log(`\t${this.viewModeString(proceed.markdownView)}`);
-		
-		const imageElements = this.imageElements(element);
-		if (imageElements.length == 0)
-			return;
+	private postProcessReadingModeHtml(element: HTMLElement, context: MarkdownPostProcessorContext) {
 
-		//console.log(element);			
-		//console.log(context.getSectionInfo(element)?.text); // This is the Markdown text
+		const processingPass = ProcessingPass.beginFromPostProcessorContext(this.app, context);
+		const imageElements = HtmlAssistant.findRelevantImagesToProcess(element, true, (imageElement) => {
+			const src = imageElement.getAttribute(HTMLElementAttribute.SRC);
+			return src !== null && Url.isValid(src) && Url.isExternal(src);
+		});
 
-		this.handleImages(HtmlAssistant.preparedImageElements(imageElements), proceed.associatedFile);
+		if (imageElements.length > 0) {
+			HtmlAssistant.cancelImageLoading(imageElements);
+			this.requestCache(imageElements, processingPass);
+		}
+		else {
+			processingPass.abort();
+		}
 	}
 
 	/**
-	 * Initiates a call to the {@link CacheManager} for each image element and changing the src to the cached file.
 	 * 
-	 * @param imageElements All images in the post proceessed HTML.
-	 * @param filePath Path to the file containing this HTML.
+	 * @param imageElements 
+	 * @param processingPass 
+	 * @returns 
 	 */
-	async handleImages(imageElements: HTMLImageElement[], associatedFile: TFile) {
+	async requestCache(imageElements: HTMLImageElement[], processingPass: ProcessingPass) {
 
-		imageElements = imageElements.length == 0
-			? []
-			: imageElements.filter((imageElement) => HtmlAssistant.cacheState(imageElement) == HTMLElementCacheState.ORIGINAL_CANCELLED);
+		imageElements = imageElements.filter((imageElement) => HtmlAssistant.isElementCacheStateEqual(imageElement, [HTMLElementCacheState.ORIGINAL_SRC_REMOVED, HTMLElementCacheState.CACHE_FAILED]));
 
-		Log(`handleImages\n\tGot ${imageElements.length} <img> elements to populate.`);
+		Log(`requestCache\n\tGot ${imageElements.length} <img> elements to populate.`);
 		if (imageElements.length == 0)
 			return;
 
-		//#region Prepare requests and group equal elements (making it one request per file, not per element).
+		const requestGroups = groupRequests(imageElements, this.cacheManager, processingPass);
 
-		const groupedByRequest: Record<string, {
-			request: CacheRequest,
-			filePath: string,
-			data: Record<string, any>,
-			done: boolean,
-		}> = {};
-
-		imageElements.forEach((imageElement) => {
-			HtmlAssistant.setCacheState(imageElement, HTMLElementCacheState.CACHE_REQUESTED);
-
-			const src = HtmlAssistant.imageElementOriginalSrc(imageElement);
-
-			if (src) {
-				const key = CacheManager.cacheKeyFromOriginalSrc(src);
-				const group = groupedByRequest[key];
-				const alt = imageElement.hasAttribute(HTMLElementAttribute.ALT) ? imageElement.alt : "";
-
-				if (group) {
-					group.data.imageElements.push(imageElement);
-					group.data.originalAlts.push(alt);
-				}
-				else {
-					const request = { key: src };
-					const validationError = this.cacheManager.validateRequest(request);
-					if (validationError) {
-						console.error(`Image element does not have a source. Omitting.`)
-						HtmlAssistant.setFailed(imageElement);
-					}
-					else {
-						groupedByRequest[key] = {
-							request,
-							filePath: associatedFile.path,
-							data: { imageElements: [imageElement], originalAlts: [alt] },
-							done: false,
-						};
-					}
-				}
-			}
-			else {
-				console.error(`Image element does not have a source. Omitting.`)
-				HtmlAssistant.setFailed(imageElement);
-			}
-
-		});
-		//#endregion
-
-		const requestGroups = Object.values(groupedByRequest); // TODO: Can be array.
-		let numberFilesToDownload = 0;
-
+		// First try to get src from local cache.		
 		for (const requestGroup of requestGroups) {
-			const cacheItem = await this.cacheManager.existingCachedItem(requestGroup.request);
+			const existingCacheResult = await this.cacheManager.existingCache(requestGroup.request, true);
+			Log(`requestCache: ${existingCacheResult.item ? "Found" : "Did not find"} key ${existingCacheResult.cacheKey}. ${existingCacheResult.fileExists === undefined ? "Unknown if file exists." : `${existingCacheResult.fileExists ? "File exists." : "File does not exist."}`}`);
+			if (existingCacheResult.item)
+				await handleRequestGroup(existingCacheResult.item, requestGroup);
+		};
 
-			if (cacheItem) {
-				requestGroup.data.imageElements.forEach((imageElement: HTMLImageElement) =>
-					HtmlAssistant.setSuccess(imageElement, cacheItem.filePath));
-				requestGroup.done = true;
-				Log(`handleImages:\n\t Used available cache: ${GetCacheKey(cacheItem.metadata.hash)}`)
-			}
-			else {
-				numberFilesToDownload++;
-			}
+		const remainingRequestGroups = requestGroups.filter((requestGroup) => !requestGroup.cacheFileFound);
+		let numberOfRemainingDownloads = remainingRequestGroups.length;
+
+		if (numberOfRemainingDownloads == 0) {
+			Log(`requestCache: All images were in cache. Done ${processingPass.passID}`);
+			processingPass.end(this.cacheManager);
+			return;
 		}
 
+		// If we are here, some images need to be downloaded. 		
+
+		// Show download notice
 		if (this.settingsManager.settings.noticeOnDownload) {
-			if (numberFilesToDownload > 0) {				
-				const notice = `↓ ${numberFilesToDownload}`;// file${numberFilesToDownload != 1 ? `s` : ``}`;
+			processingPass.runInUpdatePass(() => {
+				const notice = `↓ ${numberOfRemainingDownloads}`;
 				new Notice(notice, undefined, this.settingsManager.settings.omitNameInNotice);
-				Log(`${associatedFile.path}: ${notice}`);
-			}
+			});
 		}
-		
-		requestGroups
-			.filter((requestGroup) => !requestGroup.done)
-			.forEach((requestGroup) => {
 
-				const imageElements: HTMLImageElement[] = requestGroup.data.imageElements;
-				imageElements.forEach((ie) => {
-					HtmlAssistant.setIcon(ie, HtmlAssistant.ENCODED_LOADING_ICON);
-					ie.setAttribute(HTMLElementAttribute.ALT, "Loading...");
+		remainingRequestGroups.forEach((requestGroup) => {
+
+			for (const imageElement of requestGroup.imageElements) {
+				HtmlAssistant.setCacheState(imageElement, HTMLElementCacheState.REQUESTING_DOWNLOADING);
+				HtmlAssistant.setLoadingIcon(imageElement);
+				imageElement.setAttribute(HTMLElementAttribute.ALT, "Loading...");
+			};
+
+			// Pass `true` flag because it is known at this point that the cache doesn't exist.
+			this.cacheManager.getCache(requestGroup.request, true, async (result) => {
+
+				numberOfRemainingDownloads--;
+				const imageElements: HTMLImageElement[] = requestGroup.imageElements;
+
+				// Restore alt texts.
+				imageElements.forEach((imageElement, index) => {
+					const originalAlt = requestGroup.altAttributeValues[index];
+					if (originalAlt.length > 0)
+						imageElement.setAttribute(HTMLElementAttribute.ALT, originalAlt);
+					else
+						imageElement.removeAttribute(HTMLElementAttribute.ALT); // TODO: Chromium sets it to the original url if removed?
 				});
 
-				// Fire and forget			
-				this.cacheManager.getCache(requestGroup.request, (result) => {
+				if (result.item) {
+					Log(`requestCache:\n\tSettings src on ${imageElements.length} images\n\t${result.item.metadata.f.n}\n\t${processingPass.isInPostProcessingPass ? `In HTML post processor` : `In edit listener`}`);
+					if (result.fileExists === true)
+						await handleRequestGroup(result.item, requestGroup);
+					else
+						imageElements.forEach((imageElement) => HtmlAssistant.setFailed(imageElement));
+				}
+				else {
+					imageElements.forEach((imageElement) => HtmlAssistant.setInvalid(imageElement));
 
-					const imageElements: HTMLImageElement[] = requestGroup.data.imageElements;
+					if (ENV.debugLog && (result.error instanceof CacheFetchError || result.error instanceof CacheTypeError))
+						console.error(`requestCache:\n\t${result.error.name}`, result.error);
 
-					// Restore alt texts.
-					const originalAlts: string[] = requestGroup.data.originalAlts;
-					imageElements.forEach((imageElement, index) => {
-						const originalAlt = originalAlts[index];
-						if (originalAlt.length > 0)
-							imageElement.setAttribute(HTMLElementAttribute.ALT, originalAlt);
-						else
-							imageElement.removeAttribute(HTMLElementAttribute.ALT); // TODO: Chromium sets it to the original url if removed?
-					});
+					if (!(result.error instanceof CacheFetchError || result.error instanceof CacheTypeError))
+						console.error("requestCache:\n\tFailed to fetch cache", result.error);
+				}
 
-					if (result.item) {
-						Log(`handleImages:\n\tCache result received. Settings src on ${imageElements.length} images\n\t${result.item.metadata.file.name}`)
-						const filePath = result.item.filePath;
-						imageElements.forEach((imageElement) => HtmlAssistant.setSuccess(imageElement, filePath));
+				if (numberOfRemainingDownloads == 0) {
+					processingPass.end(this.cacheManager);
+					if (result.error instanceof CacheFetchError && result.error.isInternetDisconnected)
+						new Notice("No internet connection.");
+				}
+			});
+		});
+
+		/**
+		 * - Uses the cache item to load each image element in the request group.
+		 * - Sets the resulting {@link HTMLElementCacheState}.
+		 * - Sets {@link RequestGroup.cacheFileFound} 
+		 * - Marks the src reference as retained.
+		 * 
+		 * @param cacheItem 
+		 * @param requestGroup 
+		 */
+		async function handleRequestGroup(cacheItem: CacheItem, requestGroup: RequestGroup) {
+			const imageElements = requestGroup.imageElements;
+			const errorResult = await HtmlAssistant.loadImages(imageElements, cacheItem.resourcePath);
+
+			if (errorResult) {
+				// File as not found on disk.
+				console.error(errorResult.error);
+				//imageElements.forEach((imageElement) => HtmlAssistant.setFailed(imageElement));
+			}
+			else {
+				imageElements.forEach((imageElement) => HtmlAssistant.setCacheState(imageElement, HTMLElementCacheState.CACHE_SUCCEEDED));
+			}
+
+			requestGroup.cacheFileFound = errorResult ? false : true;
+
+			if (requestGroup.cacheFileFound) {
+				Log(`requestCache:handleRequestGroup: Found cached image: ${CacheManager.createCacheKeyFromMetadata(cacheItem.metadata)}, ID ${processingPass.passID} 📦📦📦`);
+				processingPass.retainCacheFromRequest(requestGroup.request);
+			}
+		}
+
+		/**
+		 * - Create {@link CacheRequest} for each unique image source.
+		 * - Group images per unique request.
+		 * - Set the state to {@link HTMLElementCacheState.REQUESTING} on each element.
+		 * - Retain info that could be overwritten while making the request to be able to restore it afterwards.
+		 * 
+		 * @param imageElements 
+		 * @param processingPass 
+		 * @returns 
+		 */
+		function groupRequests(imageElements: HTMLImageElement[], cacheManager: CacheManager, processingPass: ProcessingPass) {
+
+			const groupedByRequest: Record<string, RequestGroup> = {};
+
+			imageElements.forEach((imageElement) => {
+				HtmlAssistant.setCacheState(imageElement, HTMLElementCacheState.REQUESTING);
+
+				const src = HtmlAssistant.imageElementOriginalSrc(imageElement);
+
+				if (src) {
+					const key = CacheManager.createCacheKeyFromOriginalSrc(src);
+					const group = groupedByRequest[key];
+					const alt = imageElement.hasAttribute(HTMLElementAttribute.ALT) ? imageElement.alt : "";
+
+					if (group) {
+						group.imageElements.push(imageElement);
+						group.altAttributeValues.push(alt);
 					}
 					else {
-						console.error("Failed to fetch cache", result.error);
-						imageElements.forEach((imageElement) => HtmlAssistant.setFailed(imageElement));
+						const request: CacheRequest = { source: src, requesterPath: processingPass.associatedFile.path };
+						const validationError = cacheManager.validateRequest(request);
+						if (validationError) {
+							console.error(`Cache request failed validation.`, validationError)
+							HtmlAssistant.setInvalid(imageElement);
+						}
+						else {
+							groupedByRequest[key] = {
+								request,
+								imageElements: [imageElement],
+								altAttributeValues: [alt],
+								cacheFileFound: false,
+							};
+						}
 					}
-				}, true);
+				}
+				else {
+					console.error(`Image element does not have a source. Omitting.`)
+					HtmlAssistant.setInvalid(imageElement);
+				}
 			});
+
+			return Object.values(groupedByRequest);
+		}
 	}
 
 	//#endregion
 }
+
+/**
+ * Group of images that share the same cash request.
+ */
+interface RequestGroup {
+	request: CacheRequest,
+	imageElements: HTMLImageElement[],
+	altAttributeValues: string[],
+	/**
+	 * Set to true to indicate that the cache was available and there's no need to download it.
+	 * @description This is just a helper because one could iterate the image elements and check the {@link HTMLElementCacheState} to find out.
+	 */
+	cacheFileFound: boolean,
+}
+
 

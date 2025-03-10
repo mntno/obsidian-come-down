@@ -3,7 +3,7 @@
 	"name": "Come Down",
 	"version": "1.0.0",
 	"minAppVersion": "1.8.0",
-	"description": "Caches embedded external images to your local device without modifying your notes.",
+	"description": "Maintains a cache of your notes’ embedded external images.",
 	"author": "mntno",
 	"authorUrl": "https://github.com/mntno",	
 	"isDesktopOnly": false

@@ -1,51 +1,11 @@
-
-/**
- * - All datetimes are stored in ISO 8601, e.g., "2023-10-27T10:30:00Z".
- */
-export interface CacheMetadata {
-  type: CacheType;
-  file: CacheMetadataFile;
-  hash: CacheMetadataHash;
-  image?: CacheMetadataImage;
-  retainer: { [key: string]: CacheRetainer };
-  time: CacheMetadataTime;
+export interface CacheRoot {
+  retainers: Record<string, CacheRetainer>
+  items: Record<string, CacheMetadata>;
 }
 
-export const enum CacheType {
-  UNDEFINED = 0,
-  IMAGE = 1,
-};
-
-export interface CacheMetadataFile {
-  src: string;
-  name: string;
-  /** If empty string, then no extension. */
-  ext: string;
-  size: number;
-
-  /**
-   * Content-Type form HTTP header.
-   */
-  ct?: string;
-}
-
-export interface CacheMetadataHash {
-  /** Which has to use as the key. Set to "keyMD5". */
-  key: string;
-  /** The hash that is used as a key to identify each cache item. The cached files and their metadata also have this as their filename. */
-  keyMD5: string;
-  cntMD5: string;
-}
-
-export function GetCacheKey(hash: CacheMetadataHash) {
-  return hash[hash.key as keyof CacheMetadataHash];
-}
-
-export interface CacheMetadataImage {
-  width: number;
-  height: number;
-  /** Type as parsed from image data by [image-size](https://github.com/image-size/image-size). If empty string, then not determined. */
-  type: string;
+export const EMPTY_CACHE_ROOT: CacheRoot = {
+  retainers: {},
+  items: {},
 }
 
 /** 
@@ -53,10 +13,71 @@ export interface CacheMetadataImage {
  * The cache should only be remove when there are no "retainers".
  */
 export interface CacheRetainer {
-
+  /** Cache items referenced, i.e., retained. */
+  ref: string[];
 }
 
+/**
+ * - All datetimes are stored in ISO 8601, e.g., "2023-10-27T10:30:00Z".
+ */
+export interface CacheMetadata {
+  ty: CacheType;
+
+  f: CacheMetadataFile;
+
+  i?: CacheMetadataImage;
+
+  ti: CacheMetadataTime;
+}
+
+export const enum CacheType {
+  UNDEFINED = 0,
+  IMAGE = 1,
+};
+
+/** Common things about a file and its content. */
+export interface CacheMetadataFile {
+  /** src */
+  s: string;
+
+  /** name */
+  n: string;
+
+  /** 
+   * ext
+   * If empty string, then no extension. 
+   */
+  e: string;
+
+  /** size in bytes */
+  sz: number;
+
+  /**
+   * Content-Type from the HTTP response header.
+   */
+  ct?: string;
+
+  /** xxHash of the file's content. */
+  ch: string;
+}
+
+/** Image specific */
+export interface CacheMetadataImage {
+  w: number;
+  h: number;
+  /** Type as parsed from image data by [image-size](https://github.com/image-size/image-size). If empty string, then not determined. */
+  t: string;
+}
+
+/** Time related */
 export interface CacheMetadataTime {
-  download: string;
-  lastAccess: string;
+  
+  /** Download time */
+  d: string;
+  
+  /** Last accessed */
+  l: string;
+
+  /** Value of the `Cache-Control` HTTP response header. */
+  cc?: string;
 }

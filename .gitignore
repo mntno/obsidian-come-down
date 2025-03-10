@@ -8,6 +8,7 @@ node_modules
 .hotreload
 
 main.js
+cache.json
 
 # Exclude sourcemaps
 *.map
