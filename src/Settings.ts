@@ -137,6 +137,7 @@ export class SettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Advanced").setHeading();
 
+		// This is more of an "info setting" assuring that a .gitignore file exists rather than allowing its removal.
 		new Setting(containerEl)
 			.setName("Exclude cache from Git")
 			.setDesc(`Use a \`.gitignore\` file to prevent cached files from being visible to Git. Note that this option cannot be disabled here.`)
@@ -145,18 +146,25 @@ export class SettingTab extends PluginSettingTab {
 				const refreshDisabled = () => {
 					if (settings.gitIgnoreCacheDir) {
 						toggle.setDisabled(true);
-						toggle.toggleEl.style.opacity = "0.5";
+
+						// - Found no CSS variable to convey that "the setting toggle is enabled yet you cannot disable it".						
+						// - Adding a styles.css file seems too much as this is the only place where CSS is modified.
+						toggle.toggleEl.setCssStyles({
+							cursor: "not-allowed",
+							opacity: "0.6",
+							filter: "contrast(80%)"
+						});
 					}
 				}
 
 				refreshDisabled();
-				toggle.setValue(settings.gitIgnoreCacheDir);
+				toggle.setValue(settings.gitIgnoreCacheDir);				
 				toggle.onChange(async (value) => {
 					settings.gitIgnoreCacheDir = value;
 					await this.settingsManager.save();
 					refreshDisabled();
 					this.settingsManager?.onChangedCallback(SettingsManager.SETTING_NAME.gitIgnoreCacheDir, value);
 				});
-			})
+			});
 	}
 }
