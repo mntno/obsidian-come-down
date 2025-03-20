@@ -12,7 +12,7 @@ Embed external images as you normally would using a Markdown link. Here’s an e
 
 When the plugin detects an external image URL, it takes over the downloading process. Once the image is saved, the plugin will automatically load it from the cached file instead of the original URL. The next time you open the note, the cached version will be used.
 
-If your vault is synced through a file-syncing service like iCloud Drive or Dropbox (which treats your vault as a regular folder with files[^1]), cached images will sync across devices.
+If your vault is synced through a file syncing solution like Syncthing or iCloud Drive (which treats your vault as a regular folder with files[^1]), cached images will sync across devices.
 
 However, if your vault is backed up to or synced via Git (e.g., GitHub, GitLab), the cache won’t be included. This is intentional for two reasons: First, Git is designed for versioning plain-text files, not storing binary data like images. Second, hosting services like GitHub and GitLab are meant for managing code and text-based content, not for storing personal images like a photo service.
 

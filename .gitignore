@@ -4,12 +4,6 @@
 # npm
 node_modules
 
-# Hot Reload plugin
-.hotreload
-
-main.js
-cache.json
-
 # Exclude sourcemaps
 *.map
 
@@ -19,3 +13,14 @@ data.json
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store
 
+# Hot Reload plugin
+.hotreload
+
+# This plugin
+
+## The compiled main.js file.
+main.js
+
+## Created by plugin.
+cache.json
+cache/

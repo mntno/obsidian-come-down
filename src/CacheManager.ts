@@ -81,7 +81,7 @@ export class CacheFetchError extends CacheError {
   public readonly isInternetDisconnected: boolean = false;
 
   constructor(cacheKey: string, readonly error: Error | null, readonly info: { readonly sourceUrl: string, readonly statusCode?: number }) {
-    
+
     super(cacheKey, `Failed to fetch cache: ${cacheKey}. Status: ${info?.statusCode ?? "Unknown"}`, { cause: error });
 
     if (error) {
@@ -90,7 +90,7 @@ export class CacheFetchError extends CacheError {
       } else if (error instanceof URIError) {
         Log("Invalid URL provided.");
       } else if (error.message && error.message.includes("net::ERR_INTERNET_DISCONNECTED")) {
-        Log("Network error: Could not connect to the server.");        
+        Log("Network error: Could not connect to the server.");
         this.isRetryable = true;
         this.isInternetDisconnected = true;
       } else {
@@ -254,17 +254,13 @@ export class CacheManager {
 
     const retainCount = this.retainCount();
     // console.log(this.retainCount());
-    
+
     for (const removedReference of removedReferences) {
-      if (removedReference in retainCount) {
-        const cacheKeyRetainCount = retainCount[removedReference];
-        console.assert(cacheKeyRetainCount !== undefined, "");
-        if (cacheKeyRetainCount === 0) {
-          await this.removeCacheItem(removedReference);
-        }
+      const cacheKeyRetainCount = retainCount[removedReference];      
+      console.assert(cacheKeyRetainCount !== undefined, `Expected key ${removedReference} in retain count record.`);
+      if (cacheKeyRetainCount === 0) {
+        await this.removeCacheItem(removedReference);
       }
-      else
-        console.assert("");
     }
 
     // If it doesn't refernce anything anymore there's no need to keep it around.
@@ -311,9 +307,13 @@ export class CacheManager {
   }
 
   private async removeCacheItem(cacheKey: string) {
-    Log(`CacheManager:removeCacheItem\n\tRemoving ${this.nameOfCachedFileFromMetadata(this.cache[cacheKey])}`);
-    await this.vault.adapter.remove(this.filePathToCachedFileFromMetadata(this.cache[cacheKey]));
-    delete this.cache[cacheKey];
+    const metadata = this.cache[cacheKey];
+    console.assert(metadata !== undefined, `Attempted to remove cash item using a non-existing key.`);
+    if (metadata !== undefined) {
+      Log(`CacheManager:removeCacheItem\n\tRemoving ${this.nameOfCachedFileFromMetadata(metadata, cacheKey)}`);
+      await this.vault.adapter.remove(this.filePathToCachedFileFromMetadata(metadata, cacheKey));
+      delete this.cache[cacheKey];
+    }
   }
 
   /**
@@ -776,13 +776,13 @@ export class CacheManager {
           if (ENV.debugLog)
             console.error("Failed to remove cached file after write error:", removeError);
         }
-        
+
         throw error;
       }
     } catch (error) {
       if (error instanceof CacheError)
         result = new CacheResult(request, cacheKey, null, error);
-      else        
+      else
         result = new CacheResult(request, cacheKey, null, new CacheFetchError(cacheKey, error, { sourceUrl: sourceUrl }));
     }
 
@@ -799,7 +799,7 @@ export class CacheManager {
    */
   private handleImage(byteArray: Uint8Array): CacheMetadataImage {
 
-    try {      
+    try {
       const sizeCalcResult = imageSize(byteArray);
 
       // https://github.com/image-size/image-size#jpeg-image-orientation
