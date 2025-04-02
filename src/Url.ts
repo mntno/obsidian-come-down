@@ -59,6 +59,10 @@ export class Url {
     return url.startsWith("app://") || url.startsWith("capacitor://") || url.startsWith("file://");
   }
 
+  public static trimBackslash(url: string): string {
+    return url.endsWith("/") ? url.slice(0, -1) : url;
+  }
+
   /**
    * @author Gemini
    * @param url 

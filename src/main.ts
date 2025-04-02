@@ -7,6 +7,7 @@ import { HTMLElementAttribute, HTMLElementCacheState, HtmlAssistant } from "Html
 import { InfoModal } from "InfoModal";
 import { ProcessingPass } from "ProcessingPass";
 import { Url } from "Url";
+import { Workarounds } from "Workarounds";
 
 interface PluginData {
 	settings: PluginSettings;
@@ -76,7 +77,7 @@ export default class ComeDownPlugin extends Plugin {
 
 			this.addCommand({
 				id: "open-info-modal",
-				name: "Open Cacheboard",
+				name: "Cacheboard",
 				callback: () => {
 					new InfoModal(this.app, this.cacheManager, this.settingsManager.settings).open();
 				}
@@ -190,52 +191,69 @@ export default class ComeDownPlugin extends Plugin {
 
 	private editorViewUpdateListener(update: ViewUpdate) {
 
+		const sourcesToIgnore = Workarounds.detectSourcesOfInvalidImageElements(update);
+
 		const processingPass = ProcessingPass.beginFromViewUpdate(this.app, update, () => {
-			// There is no file to work with. All that can be done is to cancel loading all external urls.
+			// There is no file to work with. All that can be done is to cancel loading.
 			const imageElements = HtmlAssistant.findRelevantImagesToProcess(update.view.contentDOM, true, (imageElement) => {
 				const src = imageElement.getAttribute(HTMLElementAttribute.SRC);
-				return src !== null && Url.isValid(src) && Url.isExternal(src);
+				
+				// Filter out image elements without a src or invalid.
+				if (src === null || !Workarounds.HandleInvalidImageElements(sourcesToIgnore, imageElement, src))
+					return false;
+
+				// Allow image elements with external urls through so they can be cancelled.
+				return Url.isValid(src) && Url.isExternal(src);
 			});
 			HtmlAssistant.cancelImageLoading(imageElements);
 		});
 
-		if (processingPass) {
+		if (!processingPass)
+			return;
 
-			// Elements in DOM at this stage might be in states in which the `src` attribute has been removed. Therefore the `src` attribute is not required when finding image elements.
-			const imageElements = HtmlAssistant.findRelevantImagesToProcess(update.view.contentDOM, false, (imageElement) => {
-				const src = imageElement.getAttribute(HTMLElementAttribute.SRC);
+		// Elements in DOM at this stage might be in states in which the `src` attribute has been removed. Therefore the `src` attribute is not required when finding image elements.
+		const imageElements = HtmlAssistant.findRelevantImagesToProcess(update.view.contentDOM, false, (imageElement) => {
+			const src = imageElement.getAttribute(HTMLElementAttribute.SRC);
 
-				// 1. The user is editing the link (causing the source attribute to change) which resets the element's state.
-				//    External urls are only accepted in the element's original state.
-				if (update.docChanged && src && Url.isExternal(src) && HtmlAssistant.cacheState(imageElement) != HTMLElementCacheState.ORIGINAL)
-					HtmlAssistant.resetElement(imageElement); // Set state to "untouched".
-				
-				// 2. As all images are retained in each pass, even though elements that are already cached are excluded from further processing, they still need to be retained.
-				if (HtmlAssistant.cacheState(imageElement) == HTMLElementCacheState.CACHE_SUCCEEDED) {
-					const src = HtmlAssistant.originalSrc(imageElement);
-					console.assert(src !== null, "Expected original source dataset");
-					if (src)
-						processingPass.retainCacheFromRequest({ source: src, requesterPath: processingPass.associatedFile.path });
-				}
-				
-				// 3. Start filtering: If the image element has a src, only keep external urls; if not, keep all.
-				let isSrcOk = src !== null ? Url.isValid(src) && Url.isExternal(src) : true;
+			// 1. The user is editing the link (causing the source attribute to change) which resets the element's state.
+			//    External urls are only accepted in the element's original state.
+			if (update.docChanged && src && Url.isExternal(src) && HtmlAssistant.cacheState(imageElement) != HTMLElementCacheState.ORIGINAL)
+				HtmlAssistant.resetElement(imageElement); // Set state to "untouched".
 
-				// 4. If the url was ok, then remove all states that have passed this stage already.
-				return isSrcOk && this.filterIrrelevantCacheStates(imageElement);
-			});
-
-			if (imageElements.length > 0) {
-				HtmlAssistant.cancelImageLoading(imageElements);
-				this.requestCache(imageElements, processingPass);
+			// 2. As all images are retained in each pass, even though elements that are already cached are excluded from further processing, they still need to be retained.
+			if (HtmlAssistant.cacheState(imageElement) == HTMLElementCacheState.CACHE_SUCCEEDED) {
+				const src = HtmlAssistant.originalSrc(imageElement);
+				console.assert(src !== null, "Expected original source dataset");
+				if (src)
+					processingPass.retainCacheFromRequest({ source: src, requesterPath: processingPass.associatedFile.path });
 			}
-			else {
-				// Special case when the user deletes an existing embed and all other image elements were filtered out: there are either no other embeds or all the other are already done.
-				if (update.docChanged)
-					processingPass.end(this.cacheManager);
-				else
-					processingPass.abort();
-			}
+
+			// 3. If there's no src there's nothing left to do but to remove all states that have passed this stage already.
+			if (src === null)
+				return this.filterIrrelevantCacheStates(imageElement);
+
+			// 4. Only external urls are relevant.				
+			if (!(Url.isValid(src) && Url.isExternal(src)))
+				return false;
+
+			// 5. Filter out invalid.
+			if (!Workarounds.HandleInvalidImageElements(sourcesToIgnore, imageElement, src))
+				return false;
+
+			// 5. Remove all states that have passed this stage already.
+			return this.filterIrrelevantCacheStates(imageElement);
+		});
+
+		if (imageElements.length > 0) {
+			HtmlAssistant.cancelImageLoading(imageElements);
+			this.requestCache(imageElements, processingPass);
+		}
+		else {
+			// Special case when the user deletes an existing embed and all other image elements were filtered out: there are either no other embeds or all the other are already done.
+			if (update.docChanged)
+				processingPass.end(this.cacheManager);
+			else
+				processingPass.abort();
 		}
 	}
 

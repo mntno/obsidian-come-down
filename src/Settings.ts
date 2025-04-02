@@ -140,20 +140,13 @@ export class SettingTab extends PluginSettingTab {
 		// This is more of an "info setting" assuring that a .gitignore file exists rather than allowing its removal.
 		new Setting(containerEl)
 			.setName("Exclude cache from Git")
-			.setDesc(`Use a \`.gitignore\` file to prevent cached files from being visible to Git. Note that this option cannot be disabled here.`)
+			.setDesc(`Use a \`.gitignore\` file to prevent cached files from being visible to Git. Note that this option cannot be disabled here.`)			
+			.setClass("come-down-toggle-disabled")
 			.addToggle((toggle) => {
 
 				const refreshDisabled = () => {
 					if (settings.gitIgnoreCacheDir) {
 						toggle.setDisabled(true);
-
-						// - Found no CSS variable to convey that "the setting toggle is enabled yet you cannot disable it".						
-						// - Adding a styles.css file seems too much as this is the only place where CSS is modified.
-						toggle.toggleEl.setCssStyles({
-							cursor: "not-allowed",
-							opacity: "0.6",
-							filter: "contrast(80%)"
-						});
 					}
 				}
 

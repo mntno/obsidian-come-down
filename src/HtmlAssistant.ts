@@ -36,7 +36,11 @@ export const enum HTMLElementCacheState {
   CACHE_FAILED,
 
   /**
-   * For example, the url doesn't exist (404).
+   * For example, 
+   * - the url doesn't exist (404)
+   * - the url exists but is irrelevant, e.g., https://example.com/
+   * 
+   * Elements in this state are ignored. The may or may not have an icon set ({@link HtmlAssistant.setIcon}), e.g., if the URL was requested but resulted in 404.
    */
   INVALID,
 }

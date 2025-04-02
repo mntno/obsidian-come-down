@@ -1,0 +1,6 @@
+.come-down-toggle-disabled .checkbox-container.is-disabled {  
+  cursor: not-allowed;
+  opacity: 0.75;
+  filter: grayscale(30%) contrast(90%);
+}
+
