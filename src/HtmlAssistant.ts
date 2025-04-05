@@ -1,4 +1,5 @@
 import { ENV, Log } from "Environment";
+import { getIcon } from "obsidian";
 import { Url } from "Url";
 
 export const enum HTMLElementCacheState {
@@ -145,13 +146,13 @@ export class HtmlAssistant {
   public static setFailed(element: HTMLElement) {
     this.setCacheState(element, HTMLElementCacheState.CACHE_FAILED);
     if (element instanceof HTMLImageElement)
-      this.setIcon(element, this.SVG_FAILED_ICON_BLOB);
+      this.setIcon(element, this.failedIcon);
   }
 
   public static setInvalid(element: HTMLElement) {
     this.setCacheState(element, HTMLElementCacheState.INVALID);
     if (element instanceof HTMLImageElement)
-      this.setIcon(element, this.SVG_FAILED_ICON_BLOB);
+      this.setIcon(element, this.failedIcon);
   }
 
   /**
@@ -164,7 +165,7 @@ export class HtmlAssistant {
   public static cancelImageLoading(imageElements: HTMLImageElement[]) {
 
     const cancelImageLoad = (imageElement: HTMLImageElement): boolean => {
-      
+
       // Only continue if there's something to cancel.
       const src = imageElement.getAttribute(HTMLElementAttribute.SRC);
       if (!src) // Empty string is falsy.
@@ -307,7 +308,7 @@ export class HtmlAssistant {
   }
 
   public static setLoadingIcon(imageElement: HTMLImageElement) {
-    this.setIcon(imageElement, this.SVG_LOADING_ICON_BLOB);
+    this.setIcon(imageElement, this.loadingIcon);
   }
 
   private static setIcon(imageElement: HTMLImageElement, blob: Blob) {
@@ -321,18 +322,31 @@ export class HtmlAssistant {
   }
 
   /**
-  * @todo
-  * @see {@link https://lucide.dev/icons/loader}
-  */
-  private static readonly SVG_LOADING_ICON_BLOB = new Blob(
-    [`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#919191" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-loader"><path d="M12 2v4"/><path d="m16.2 7.8 2.9-2.9"/><path d="M18 12h4"/><path d="m16.2 16.2 2.9 2.9"/><path d="M12 18v4"/><path d="m4.9 19.1 2.9-2.9"/><path d="M2 12h4"/><path d="m4.9 4.9 2.9 2.9"/></svg>`],
-    { type: "image/svg+xml" }
-  );
+   * @see {@link https://lucide.dev/icons/loader}
+   */
+  private static get loadingIcon(): Blob {
+    if (this.loadingIconBacking === undefined) {
+      const icon = getIcon("loader")
+      console.assert(icon, "loader icon id not found");
+      icon!.setAttribute("stroke", "#919191");
+      icon!.setAttribute("stroke-width", "1");
+      this.loadingIconBacking = new Blob([icon!.outerHTML], { type: "image/svg+xml" });
+    }
+    return this.loadingIconBacking;
+  }
+  private static loadingIconBacking?: Blob;
 
-  private static readonly SVG_FAILED_ICON_BLOB = new Blob(
-    [`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ff0000" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-image"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>`],
-    { type: "image/svg+xml" }
-  );
+  private static get failedIcon(): Blob {
+    if (this.failedIconBacking === undefined) {
+      const icon = getIcon("image")
+      console.assert(icon, "image icon id not found");
+      icon!.setAttribute("stroke", "#ff0000");
+      icon!.setAttribute("stroke-width", "1");
+      this.failedIconBacking = new Blob([icon!.outerHTML], { type: "image/svg+xml" });
+    }
+    return this.failedIconBacking;
+  }
+  private static failedIconBacking?: Blob;
 }
 
 class HtmlAssistantFileNotFoundError extends Error {

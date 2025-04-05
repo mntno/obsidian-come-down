@@ -7,8 +7,8 @@ import { HtmlAssistant, HTMLElementAttribute, HTMLElementCacheState } from "Html
 export class Workarounds {
 
   /**
-   * If there is markdown link at any point after an empty embedded syntax
-   * (i.e., "\!\[\]\(\)" or "\!\[\]\(") and `img` element will be insterted with the `src` attribute
+   * If there is a Markdown link at any point after an empty embedded syntax
+   * (i.e., "\!\[\]\(\)" or "\!\[\]\(") an `img` element will be insterted with the `src` attribute
    * set to the `href` of the link!
    * 
    * Therefore, when the user types "\!\[\]\(\)" the plugin will start downloading the `href` url.
