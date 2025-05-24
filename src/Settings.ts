@@ -10,16 +10,18 @@ export interface PluginSettings {
 	/** Remove the name of the plugin when showing the download message. */
 	omitNameInNotice: boolean;
 
-	/** 
+	/**
 	 * Whether to "gitignore" the cache dir.
-	 * When set to: `true`, make sure there's a `.gitignore` file in the cache directory; `false` to make sure otherwise. 
-	 * 
+	 * When set to: `true`, make sure there's a `.gitignore` file in the cache directory; `false` to make sure otherwise.
+	 *
 	 * This can't be disabled in the UI. But those who take matters into their own hands with data.json...
 	 */
 	gitIgnoreCacheDir: boolean;
 
 	showDebugInfo: boolean;
 }
+
+type SettingsChanged = (settings: PluginSettings) => void;
 
 export class SettingsManager {
 	public settings: PluginSettings;
@@ -42,6 +44,22 @@ export class SettingsManager {
 		this.save = () => save(this.settings);
 		this.onChangedCallback = onChangedCallback;
 	}
+
+	public onSettingsChangedExternally(settings: PluginSettings) {
+		this.settings = settings;
+		this.registeredChangedCallbacks.forEach(cb => cb(this.settings));
+	}
+
+	public registerOnChangedCallback(evt: SettingsChanged) {
+		if (!this.registeredChangedCallbacks.includes(evt))
+			this.registeredChangedCallbacks.push(evt);
+	}
+
+	public unregisterOnChangedCallback(evt: SettingsChanged) {
+		this.registeredChangedCallbacks = this.registeredChangedCallbacks.filter(callback => callback !== evt);
+	}
+
+	private registeredChangedCallbacks: SettingsChanged[] = [];
 }
 
 export class SettingTab extends PluginSettingTab {
@@ -54,7 +72,10 @@ export class SettingTab extends PluginSettingTab {
 		this.cacheManager = cacheManager;
 	}
 
+	private onChangedCallback = () => this.display();
+
 	display(): void {
+		this.settingsManager.registerOnChangedCallback(this.onChangedCallback);
 		const { containerEl } = this;
 		const settings = this.settingsManager.settings;
 
@@ -140,7 +161,7 @@ export class SettingTab extends PluginSettingTab {
 		// This is more of an "info setting" assuring that a .gitignore file exists rather than allowing its removal.
 		new Setting(containerEl)
 			.setName("Exclude cache from Git")
-			.setDesc(`Use a \`.gitignore\` file to prevent cached files from being visible to Git. Note that this option cannot be disabled here.`)			
+			.setDesc(`Use a \`.gitignore\` file to prevent cached files from being visible to Git. Note that this option cannot be disabled here.`)
 			.setClass("come-down-toggle-disabled")
 			.addToggle((toggle) => {
 
@@ -151,7 +172,7 @@ export class SettingTab extends PluginSettingTab {
 				}
 
 				refreshDisabled();
-				toggle.setValue(settings.gitIgnoreCacheDir);				
+				toggle.setValue(settings.gitIgnoreCacheDir);
 				toggle.onChange(async (value) => {
 					settings.gitIgnoreCacheDir = value;
 					await this.settingsManager.save();
@@ -159,5 +180,9 @@ export class SettingTab extends PluginSettingTab {
 					this.settingsManager?.onChangedCallback(SettingsManager.SETTING_NAME.gitIgnoreCacheDir, value);
 				});
 			});
+	}
+
+	public hide(): void {
+		this.settingsManager.unregisterOnChangedCallback(this.onChangedCallback);
 	}
 }

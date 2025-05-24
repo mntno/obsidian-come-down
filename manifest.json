@@ -1,10 +1,10 @@
 {
 	"id": "come-down",
 	"name": "Come Down",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"minAppVersion": "1.8.0",
 	"description": "Maintains a cache of your notes’ embedded external images.",
 	"author": "mntno",
-	"authorUrl": "https://github.com/mntno",	
+	"authorUrl": "https://github.com/mntno",
 	"isDesktopOnly": false
 }

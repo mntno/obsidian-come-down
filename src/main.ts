@@ -30,7 +30,7 @@ export default class ComeDownPlugin extends Plugin {
 
 		Notice.setName(this.manifest.name);
 
-		this.data = Object.assign({}, DEFAULT_DATA, await this.loadData());
+		this.data = await ComeDownPlugin.loadPluginData(this);
 
 		await this.ensureCacheDir();
 		await this.ensureGitIgnore();
@@ -51,7 +51,7 @@ export default class ComeDownPlugin extends Plugin {
 
 		//#endregion
 
-		//#region Register 
+		//#region Register
 
 		this.registerMarkdownPostProcessor((e, c) => this.postProcessReadingModeHtml(e, c));
 		this.registerEditorExtension(EditorView.updateListener.of((vu) => this.editorViewUpdateListener(vu)));
@@ -72,6 +72,11 @@ export default class ComeDownPlugin extends Plugin {
 				}
 			})
 		);
+
+		this.registerInterval(
+			window.setInterval(() => this.cacheManager.onMetadataFileChangedExternally().catch(console.error),
+			5000
+		));
 
 		if (ENV.dev) {
 
@@ -105,10 +110,24 @@ export default class ComeDownPlugin extends Plugin {
 		await this.cacheManager?.cancelAllOngoing();
 	}
 
+	onExternalSettingsChange?() {
+		if (this.data) {
+			ComeDownPlugin.loadPluginData(this).then(data => {
+				this.data = data;
+				this.settingsManager.onSettingsChangedExternally(this.data.settings);
+			})
+		}
+	}
+
+	private static async loadPluginData(plugin: Plugin): Promise<PluginData> {
+		const data = await plugin.loadData(); // Returns `null` if file doesn't exist.
+		return Object.assign({}, DEFAULT_DATA, data);
+	}
+
 	//#region Cache Init
 
 	/**
-	 * Will be set once it's ensured that `this.manifest.dir` is set. 
+	 * Will be set once it's ensured that `this.manifest.dir` is set.
 	 * @throws {Error} If `this.manifest.dir` isn't set.
 	 */
 	get cacheDir(): string {
@@ -132,9 +151,9 @@ export default class ComeDownPlugin extends Plugin {
 	private cacheMetadataPath: string;
 
 	/**
-	 * Ensures the cache directory exists.  
-	 *  
-	 * Do not catch {@link Error}s so as to prevent the plugin from being enabled in such cases.  
+	 * Ensures the cache directory exists.
+	 *
+	 * Do not catch {@link Error}s so as to prevent the plugin from being enabled in such cases.
 	 */
 	async ensureCacheDir() {
 		const cacheFolderExists = await this.app.vault.adapter.exists(this.cacheDir);
@@ -162,21 +181,21 @@ export default class ComeDownPlugin extends Plugin {
 	 * Remove requesting, downloading, done, and invalid.
 	 * - The done image element is already pointing to the cached resource. No need to do anything more.
 	 * - Those that are downloading will be handled as the download finishes as part of a previous pass.
-	 * 
+	 *
 	 * Keep
-	 * - Original: these need to be cancelled 
+	 * - Original: these need to be cancelled
 	 * - Cancelled and Failed: these need to request cache.
-	 * 
-	 * @param imageElement 
-	 * @returns 
+	 *
+	 * @param imageElement
+	 * @returns
 	 */
 	private filterIrrelevantCacheStates(imageElement: HTMLImageElement) {
 
 		const state = HtmlAssistant.cacheState(imageElement)
 
 		// return HtmlAssistant.isCacheStateEqual(state, [
-		// 	HTMLElementCacheState.ORIGINAL, 
-		// 	HTMLElementCacheState.ORIGINAL_SRC_REMOVED, 
+		// 	HTMLElementCacheState.ORIGINAL,
+		// 	HTMLElementCacheState.ORIGINAL_SRC_REMOVED,
 		// 	HTMLElementCacheState.CACHE_FAILED
 		// ]);
 
@@ -197,7 +216,7 @@ export default class ComeDownPlugin extends Plugin {
 			// There is no file to work with. All that can be done is to cancel loading.
 			const imageElements = HtmlAssistant.findRelevantImagesToProcess(update.view.contentDOM, true, (imageElement) => {
 				const src = imageElement.getAttribute(HTMLElementAttribute.SRC);
-				
+
 				// Filter out image elements without a src or invalid.
 				if (src === null || !Workarounds.HandleInvalidImageElements(sourcesToIgnore, imageElement, src))
 					return false;
@@ -232,7 +251,7 @@ export default class ComeDownPlugin extends Plugin {
 			if (src === null)
 				return this.filterIrrelevantCacheStates(imageElement);
 
-			// 4. Only external urls are relevant.				
+			// 4. Only external urls are relevant.
 			if (!(Url.isValid(src) && Url.isExternal(src)))
 				return false;
 
@@ -260,9 +279,9 @@ export default class ComeDownPlugin extends Plugin {
 	/**
 	 * - Will not be called if never in Read mode since there's no need to render Markdown.
 	 * - In Read mode, it will always be called after the update listener, {@link editorViewUpdateListener}, as it might make changes.
-	 * 
+	 *
 	 * @param element A chunk of HTML.
-	 * @param context 
+	 * @param context
 	 */
 	private postProcessReadingModeHtml(element: HTMLElement, context: MarkdownPostProcessorContext) {
 
@@ -282,10 +301,10 @@ export default class ComeDownPlugin extends Plugin {
 	}
 
 	/**
-	 * 
-	 * @param imageElements 
-	 * @param processingPass 
-	 * @returns 
+	 *
+	 * @param imageElements
+	 * @param processingPass
+	 * @returns
 	 */
 	async requestCache(imageElements: HTMLImageElement[], processingPass: ProcessingPass) {
 
@@ -297,7 +316,7 @@ export default class ComeDownPlugin extends Plugin {
 
 		const requestGroups = groupRequests(imageElements, this.cacheManager, processingPass);
 
-		// First try to get src from local cache.		
+		// First try to get src from local cache.
 		for (const requestGroup of requestGroups) {
 			const existingCacheResult = await this.cacheManager.existingCache(requestGroup.request, true);
 			Log(`requestCache: ${existingCacheResult.item ? "Found" : "Did not find"} key ${existingCacheResult.cacheKey}. ${existingCacheResult.fileExists === undefined ? "Unknown if file exists." : `${existingCacheResult.fileExists ? "File exists." : "File does not exist."}`}`);
@@ -314,7 +333,7 @@ export default class ComeDownPlugin extends Plugin {
 			return;
 		}
 
-		// If we are here, some images need to be downloaded. 		
+		// If we are here, some images need to be downloaded.
 
 		// Show download notice
 		if (this.settingsManager.settings.noticeOnDownload) {
@@ -375,11 +394,11 @@ export default class ComeDownPlugin extends Plugin {
 		/**
 		 * - Uses the cache item to load each image element in the request group.
 		 * - Sets the resulting {@link HTMLElementCacheState}.
-		 * - Sets {@link RequestGroup.cacheFileFound} 
+		 * - Sets {@link RequestGroup.cacheFileFound}
 		 * - Marks the src reference as retained.
-		 * 
-		 * @param cacheItem 
-		 * @param requestGroup 
+		 *
+		 * @param cacheItem
+		 * @param requestGroup
 		 */
 		async function handleRequestGroup(cacheItem: CacheItem, requestGroup: RequestGroup) {
 			const imageElements = requestGroup.imageElements;
@@ -407,10 +426,10 @@ export default class ComeDownPlugin extends Plugin {
 		 * - Group images per unique request.
 		 * - Set the state to {@link HTMLElementCacheState.REQUESTING} on each element.
 		 * - Retain info that could be overwritten while making the request to be able to restore it afterwards.
-		 * 
-		 * @param imageElements 
-		 * @param processingPass 
-		 * @returns 
+		 *
+		 * @param imageElements
+		 * @param processingPass
+		 * @returns
 		 */
 		function groupRequests(imageElements: HTMLImageElement[], cacheManager: CacheManager, processingPass: ProcessingPass) {
 
@@ -473,5 +492,3 @@ interface RequestGroup {
 	 */
 	cacheFileFound: boolean,
 }
-
-

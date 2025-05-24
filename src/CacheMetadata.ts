@@ -1,14 +1,14 @@
 export interface CacheRoot {
-  retainers: Record<string, CacheRetainer>
+  retainers: Record<string, CacheRetainer>;
   items: Record<string, CacheMetadata>;
 }
 
 export const EMPTY_CACHE_ROOT: CacheRoot = {
-  retainers: {},
+	retainers: {},
   items: {},
 }
 
-/** 
+/**
  * All files that reference a {@link CacheMetadata}.
  * The cache should only be remove when there are no "retainers".
  */
@@ -43,9 +43,9 @@ export interface CacheMetadataFile {
   /** name */
   n: string;
 
-  /** 
+  /**
    * ext
-   * If empty string, then no extension. 
+   * If empty string, then no extension.
    */
   e: string;
 
@@ -71,10 +71,10 @@ export interface CacheMetadataImage {
 
 /** Time related */
 export interface CacheMetadataTime {
-  
+
   /** Download time */
   d: string;
-  
+
   /** Last accessed */
   l: string;
 
