@@ -4,7 +4,7 @@ import { Log, ENV } from "Environment";
 import { CacheRequest, CacheManager } from "CacheManager";
 
 /**
- * - Gathers some state useful during the current pass. 
+ * - Gathers some state useful during the current pass.
  * - Call first in system callbacks to abort as early as possible.
  */
 export class ProcessingPass {
@@ -18,19 +18,23 @@ export class ProcessingPass {
 
 	private static updatePassID: number = 0;
 	private static postProcessorPassID: number = 0;
-	public passID: number;
+	public readonly passID: number;
+
+	private constructor(id: number) {
+		this.passID = id;
+	}
 
 	public static beginFromViewUpdate(app: App, viewUpdate: ViewUpdate, noFile: () => void, sourceMode?: () => void): ProcessingPass | null {
 
-		const processPassID = this.updatePassID++;
+		const thisID = this.updatePassID++;
 
 		if (ENV.dev) {
 
 			const updated = this.viewUpdateChanges(viewUpdate);
 			const changed = Object.keys(updated).filter(key => updated[key]);
 			const notChanged = Object.keys(updated).filter(key => !updated[key]);
-			
-			Log(`🥎 editorViewUpdateListener ${changed.length} view updates. 🛎️ ID ${processPassID}`);
+
+			Log(`🥎 editorViewUpdateListener ${changed.length} view updates. 🛎️ ID ${thisID}`);
 			if (changed.length > 0)
 				Log(`\t🟢 ${changed.join(", ")}`);
 			if (changed.length > 0 && notChanged.length > 0)
@@ -42,7 +46,7 @@ export class ProcessingPass {
 
 		// `app.workspace.getActiveFile()` is of no help.
 		if (!associatedFile) {
-			Log(`\tNo associated file. ID ${processPassID}`);
+			Log(`\tNo associated file. ID ${thisID}`);
 			noFile();
 			return null;
 		}
@@ -51,8 +55,7 @@ export class ProcessingPass {
 			return null;
 		}
 		else {
-			const instance = new this();
-			instance.passID = processPassID;
+			const instance = new this(thisID);
 			instance.markdownView = markdownView;
 			instance.associatedFile = associatedFile;
 			instance.isInPostProcessingPass = false;
@@ -63,13 +66,12 @@ export class ProcessingPass {
 	}
 
 	public static beginFromPostProcessorContext(app: App, context: MarkdownPostProcessorContext) : ProcessingPass {
-		
-		const postProcessorPassID = this.postProcessorPassID++;
 
-		Log(`🏀 postProcessReadingModeHtml 🛎️ ID ${postProcessorPassID}`);
+		const thisID = this.postProcessorPassID++;
 
-		const instance = new this();
-		instance.passID = postProcessorPassID;
+		Log(`🏀 postProcessReadingModeHtml 🛎️ ID ${thisID}`);
+
+		const instance = new this(thisID);
 		instance.isInPostProcessingPass = true;
 
 		instance.markdownView = app.workspace.getActiveViewOfType(MarkdownView);
@@ -90,7 +92,7 @@ export class ProcessingPass {
 		u["focusChanged"] = viewUpdate.focusChanged;
 		u["geometryChanged"] = viewUpdate.geometryChanged;
 		u["heightChanged"] = viewUpdate.heightChanged;
-		u["viewportMoved"] = viewUpdate.viewportMoved; 
+		u["viewportMoved"] = viewUpdate.viewportMoved;
 
 		return u;
 	}
@@ -108,14 +110,14 @@ export class ProcessingPass {
 	/**
 	 * The {@link EditorView.updateListener.of} {@link Extension} is called in both reader and preview/source mode and let's you process all elements at once.
 	 * The {@link registerMarkdownPostProcessor} is only called first when the file is opened in reader mode. It is called several times as the DOM is beeing built, which makes it complicated to consolidate them into one call.
-	 * 
+	 *
 	 * Because the update listener extension callback supplies the DOM of the whole file's writing area, and further, because it is always run before the Markdown post processor,
-	 * it is enough and simplest to show the download notice only when invoked from the extension callback, i.e., when {@link processingContext.isInPostProcessingPass} is `true`.
-	 * 
-	 * 
-	 * @param processingContext 
-	 * @param run  
-	 * @returns 
+	 * it is enough and simplest to show the download notice only when invoked from the extension callback, i.e., when {@link isInPostProcessingPass} is `true`.
+	 *
+	 *
+	 * @param processingContext
+	 * @param run
+	 * @returns
 	 */
 	public runInUpdatePass(run?: () => void) {
 		if (this.isInUpdatePass) {
@@ -146,14 +148,14 @@ export class ProcessingPass {
 
 		if (this.isInUpdatePass) {
 			cacheManager.updateRetainedCaches(this.requestsToRetain, this.associatedFile.path).then(() => {
-					Log(`\tSaving metadata: ID ${this.passID}`);
-					cacheManager.saveMetadataIfDirty();				
+					Log(`\tCalling saveMetadataIfDirty: ID ${this.passID}`);
+					cacheManager.saveMetadataIfDirty();
 			});
 		}
 	}
 
 	public abort() {
-		Log(`${this.isInUpdatePass ? `🥎 ProcessingPass:abort: Update pass ⛔ ID ${this.passID}` : `🏀 ProcessingPass:end: Post processing pass ⛔ ID ${this.passID}`}`);		
+		Log(`${this.isInUpdatePass ? `🥎 ProcessingPass:abort: Update pass ⛔ ID ${this.passID}` : `🏀 ProcessingPass:end: Post processing pass ⛔ ID ${this.passID}`}`);
 	}
 
 }

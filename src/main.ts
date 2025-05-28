@@ -265,7 +265,9 @@ export default class ComeDownPlugin extends Plugin {
 
 		if (imageElements.length > 0) {
 			HtmlAssistant.cancelImageLoading(imageElements);
-			this.requestCache(imageElements, processingPass);
+			this.enqueue(async () => {
+				await this.requestCache(imageElements, processingPass);
+			});
 		}
 		else {
 			// Special case when the user deletes an existing embed and all other image elements were filtered out: there are either no other embeds or all the other are already done.
@@ -293,12 +295,20 @@ export default class ComeDownPlugin extends Plugin {
 
 		if (imageElements.length > 0) {
 			HtmlAssistant.cancelImageLoading(imageElements);
-			this.requestCache(imageElements, processingPass);
+			this.enqueue(async () => {
+				await this.requestCache(imageElements, processingPass);
+			});
 		}
 		else {
 			processingPass.abort();
 		}
 	}
+
+	private enqueue(operation: () => Promise<void>): Promise<void> {
+		this.serialQueue = this.serialQueue.then(() => operation());
+		return this.serialQueue;
+	}
+	private serialQueue: Promise<void> = Promise.resolve();
 
 	/**
 	 *
@@ -310,9 +320,11 @@ export default class ComeDownPlugin extends Plugin {
 
 		imageElements = imageElements.filter((imageElement) => HtmlAssistant.isElementCacheStateEqual(imageElement, [HTMLElementCacheState.ORIGINAL_SRC_REMOVED, HTMLElementCacheState.CACHE_FAILED]));
 
-		Log(`requestCache\n\tGot ${imageElements.length} <img> elements to populate.`);
+		Log(`requestCache\n\tGot ${imageElements.length} <img> elements to populate: ID ${processingPass.passID}`);
 		if (imageElements.length == 0)
 			return;
+
+		await this.cacheManager.onMetadataFileChangedExternally();
 
 		const requestGroups = groupRequests(imageElements, this.cacheManager, processingPass);
 
