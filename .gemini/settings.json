@@ -1,0 +1,10 @@
+{
+	"autoAccept": false,
+	"contextFileName": ["GEMINI.md"],
+	"fileFiltering": {
+	  "respectGitIgnore": true,
+	  "enableRecursiveFileSearch": true
+	},
+	"hideBanner": true,
+	"usageStatisticsEnabled": false
+}

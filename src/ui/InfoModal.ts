@@ -1,7 +1,8 @@
-import { App, ButtonComponent, Modal, Setting } from 'obsidian';
-import { CacheManager } from 'CacheManager';
-import { PluginSettings } from 'Settings';
-import { Notice } from 'Environment';
+import { App, ButtonComponent, Modal, Setting } from "obsidian";
+import { CacheManager } from "../CacheManager";
+import { PluginSettings } from "../Settings";
+import { Notice } from "./Notice";
+import { Env } from "../Env";
 
 export class InfoModal extends Modal {
 	private cacheManager: CacheManager;
@@ -28,7 +29,7 @@ export class InfoModal extends Modal {
 						await cacheManager.clearCached((error) => {
 							if (error) {
 								new Notice(`An error occured while clearing the cache: ${error.message}`, 0);
-								console.error("Error clearing cache.", error);
+								Env.log.e("Error clearing cache.", error);
 							}
 							else {
 								new Notice("Cache cleared");

@@ -1,10 +1,10 @@
-
+import { Env } from "../Env";
 
 export class Url {
 
   /**
-   * These are case-sensitive. Use with {@link normalizedHeaders}.
-   */
+		* These are case-sensitive. Use with {@link normalizedHeaders}.
+		*/
   public static readonly RESPONSE_HEADER_LOWERCASE = {
     contentType: "Content-Type".toLowerCase(),
     contentLength: "Content-Length".toLowerCase(),
@@ -17,15 +17,18 @@ export class Url {
   } as const;
 
   /**
-   * Normalize headers to make sure to, e.g., find both `Content-Type` and `content-type`.
-   * Also ignores empty strings and trims.
-   */
+		* Normalize headers to make sure to, e.g., find both `Content-Type` and `content-type`.
+		* Also ignores empty strings and trims.
+		*/
   public static normalizeHeaders(headers: Record<string, string>): Record<string, string> {
     const normalizedHeaders: Record<string, string> = {};
 
-    for (const key in headers)
-      if (key.length > 0)
-        normalizedHeaders[key.toLowerCase().trim()] = headers[key];
+    for (const key in headers) {
+      const value = headers[key];
+      if (key.length > 0 && value !== undefined) {
+        normalizedHeaders[key.toLowerCase().trim()] = value;
+      }
+    }
 
     return normalizedHeaders;
   }
@@ -34,9 +37,7 @@ export class Url {
     return url && URL.canParse(url) ? true : false;
   }
 
-  /**
-   * These are not relevant: ftp, mailto, tel, ws: and wss:   
-   */
+  /** These are not relevant: ftp, mailto, tel, ws: and wss: */
   public static isExternal(src: string): boolean {
     try {
       const url = new URL(src);
@@ -63,11 +64,7 @@ export class Url {
     return url.endsWith("/") ? url.slice(0, -1) : url;
   }
 
-  /**
-   * @author Gemini
-   * @param url 
-   * @returns 
-   */
+  /** @author Gemini */
   public static extractFilenameAndExtension(url: string): { filename: string, extension: string } | null {
     try {
       const urlObj = new URL(url);
@@ -94,9 +91,8 @@ export class Url {
 
       return { filename, extension };
     } catch (error) {
-      console.error(`Error parsing URL: ${error}`);
+      		Env.log.e(`Error parsing URL: ${error}`);
       return null; // Invalid URL
     }
   }
 }
-

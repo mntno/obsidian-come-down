@@ -1,6 +1,7 @@
-import { PluginSettingTab, Setting, Plugin, Platform } from "obsidian";
-import { ENV, Notice } from "Environment";
-import { CacheManager } from "CacheManager";
+import { Platform, Plugin, PluginSettingTab, Setting } from "obsidian";
+import { CacheManager } from "./CacheManager";
+import { Env } from "./Env";
+import { Notice } from "./ui/Notice";
 
 export interface PluginSettings {
 
@@ -11,11 +12,11 @@ export interface PluginSettings {
 	omitNameInNotice: boolean;
 
 	/**
-	 * Whether to "gitignore" the cache dir.
-	 * When set to: `true`, make sure there's a `.gitignore` file in the cache directory; `false` to make sure otherwise.
-	 *
-	 * This can't be disabled in the UI. But those who take matters into their own hands with data.json...
-	 */
+		* Whether to "gitignore" the cache dir.
+		* When set to: `true`, make sure there's a `.gitignore` file in the cache directory; `false` to make sure otherwise.
+		*
+		* This can't be disabled in the UI. But those who take matters into their own hands with data.json...
+		*/
 	gitIgnoreCacheDir: boolean;
 
 	showDebugInfo: boolean;
@@ -65,6 +66,7 @@ export class SettingsManager {
 export class SettingTab extends PluginSettingTab {
 	private settingsManager: SettingsManager;
 	private cacheManager: CacheManager;
+	private isShown = false;
 
 	constructor(plugin: Plugin, settingsManager: SettingsManager, cacheManager: CacheManager) {
 		super(plugin.app, plugin);
@@ -72,10 +74,26 @@ export class SettingTab extends PluginSettingTab {
 		this.cacheManager = cacheManager;
 	}
 
+	public display(): void {
+		Env.log.d("SettingTab:display: isShown", this.isShown);
+
+		if (!this.isShown)
+			this.settingsManager.registerOnChangedCallback(this.onChangedCallback);
+		this.isShown = true;
+
+		this.cacheManager.checkIfMetadataFileChangedExternally().then(() => this.render());
+	}
+
+	public hide(): void {
+		Env.log.d("SettingTab:hide");
+		if (this.isShown)
+			this.settingsManager.unregisterOnChangedCallback(this.onChangedCallback);
+		this.isShown = false;
+	}
+
 	private onChangedCallback = () => this.display();
 
-	display(): void {
-		this.settingsManager.registerOnChangedCallback(this.onChangedCallback);
+	private async render() {
 		const { containerEl } = this;
 		const settings = this.settingsManager.settings;
 
@@ -114,45 +132,45 @@ export class SettingTab extends PluginSettingTab {
 		setCompactDownloadMessageVisibility();
 
 		const cachedFilesSetting = new Setting(containerEl).setName('Number of files cached');
-		setTimeout(() => {
-			this.cacheManager.actualCachedFilePaths().then((filePaths) => {
-				const num = filePaths.length;
-				cachedFilesSetting.setDesc(`${num} file${num == 1 ? `` : `s`}.`);
+		this.cacheManager.actualCachedFilePaths().then((filePaths) => {
+			const num = filePaths.length;
+			cachedFilesSetting.setDesc(`${num} file${num == 1 ? `` : `s`}.`);
 
-				if (num == 0)
-					return;
+			if (num == 0)
+				return;
 
-				cachedFilesSetting.addButton((button) => {
-					button.buttonEl.tabIndex = -1;
-					button.setButtonText("Delete all cached files");
-					button.onClick(() => {
-						button.setButtonText("Confirm cache delete");
-						button.setWarning();
-						button.onClick(async () => {
+			cachedFilesSetting.addButton((button) => {
+				button.buttonEl.tabIndex = -1;
+				button.setButtonText("Delete all cached files");
+				button.onClick(() => {
+					button.setButtonText("Confirm cache delete");
+					button.setWarning();
+					button.onClick(async () => {
 
-							await this.cacheManager.clearCached((error) => {
-								if (error) {
-									new Notice(`An error occured while clearing the cache: ${error.message}`, 0);
-									console.error("Error clearing cache.", error);
+						await this.cacheManager.clearCached((error) => {
+							if (error) {
+								new Notice(`An error occured while clearing the cache: ${error.message}`, 0);
+								Env.log.e("Error clearing cache.", error);
+							}
+							else {
+								new Notice("Cache cleared");
+								cachedFilesSetting.setDesc("Cache is empty.")
+
+								button.buttonEl.remove();
+
+								if (Env.isDev && Platform.isDesktopApp) {
+									require('electron').remote.session.defaultSession.clearCache()
+										.then(() => new Notice('Electron Cache cleared successfully. Restart vault.'))
+										.catch((error: any) => Env.log.e('Error clearing cache:', error));
 								}
-								else {
-									new Notice("Cache cleared");
-									cachedFilesSetting.setDesc("Cache is empty.")
-
-									button.buttonEl.remove();
-
-									if (ENV.dev && Platform.isDesktopApp) {
-										require('electron').remote.session.defaultSession.clearCache()
-											.then(() => new Notice('Electron Cache cleared successfully. Restart vault.'))
-											.catch((error: any) => console.error('Error clearing cache:', error));
-									}
-								}
-							});
+							}
 						});
 					});
 				});
-
-			})
+			});
+		}).catch(error => {
+			Env.log.e("Failed to count cached files:", error);
+			cachedFilesSetting.setDesc("Failed to count cached files.");
 		});
 
 		new Setting(containerEl)
@@ -180,9 +198,5 @@ export class SettingTab extends PluginSettingTab {
 					this.settingsManager?.onChangedCallback(SettingsManager.SETTING_NAME.gitIgnoreCacheDir, value);
 				});
 			});
-	}
-
-	public hide(): void {
-		this.settingsManager.unregisterOnChangedCallback(this.onChangedCallback);
 	}
 }

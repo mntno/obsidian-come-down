@@ -11,7 +11,8 @@
 	"keywords": [],
 	"author": "mntno",
 	"license": "MIT",
-	"devDependencies": {				
+	"devDependencies": {
+		"@codemirror/language": "6.11.3",
 		"@codemirror/view": "^6.36.4",
 		"@eslint/js": "9.21.0",
 		"@lezer/common": "^1.2.3",

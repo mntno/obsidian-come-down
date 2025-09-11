@@ -11,6 +11,7 @@
     "importHelpers": true,
     "isolatedModules": true,
     "strictNullChecks": true,
+    "noUncheckedIndexedAccess": true,
     "lib": ["DOM", "ES2022"]
   },
   "include": [
