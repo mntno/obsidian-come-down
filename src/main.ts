@@ -7,6 +7,7 @@ import { ProcessingPass } from "./ProcessingPass";
 import { PluginSettings, SettingTab, SettingsManager } from "./Settings";
 import { InfoModal } from "./ui/InfoModal";
 import { Notice } from "./ui/Notice";
+import { File } from "./utils/File";
 import { ObsAssistant } from "./utils/ObsAssistant";
 
 
@@ -65,33 +66,35 @@ export default class ComeDownPlugin extends Plugin {
 			})
 		);
 
-		this.registerInterval(window.setInterval(() => this.cacheManager.checkIfMetadataFileChangedExternally().catch(Env.log.e), 1000 * 60 * 10));
+		this.app.workspace.onLayoutReady(() => {
+			setTimeout(() => this.removeSyncConflictFiles(), 1000);
+			this.registerInterval(window.setInterval(() => this.cacheManager.checkIfMetadataFileChangedExternally().catch(Env.log.e), 1000 * 60 * 10));
 
-		if (Env.isDev) {
+			if (Env.isDev) {
+				this.addCommand({
+					id: "open-info-modal",
+					name: "Cacheboard",
+					callback: () => {
+						this.cacheManager.checkIfMetadataFileChangedExternally()
+							.then(() => new InfoModal(this.app, this.cacheManager, this.settingsManager.settings).open())
+							.catch(Env.log.e);
+					}
+				});
 
-			this.addCommand({
-				id: "open-info-modal",
-				name: "Cacheboard",
-				callback: () => {
-					this.cacheManager.checkIfMetadataFileChangedExternally()
-						.then(() =>	new InfoModal(this.app, this.cacheManager, this.settingsManager.settings).open())
-						.catch(Env.log.e);
-				}
-			});
-
-			this.addCommand({
-				id: "delete-all-cache-and-reload",
-				name: "Delete cache and reload",
-				callback: () => {
-					this.cacheManager.clearCached((error) => {
-						if (error)
-							Env.log.e("Failed to clear cache", error);
-						else
-							Env.clearBrowserCache(this.app);
-					});
-				}
-			});
-		}
+				this.addCommand({
+					id: "delete-all-cache-and-reload",
+					name: "Delete cache and reload",
+					callback: () => {
+						this.cacheManager.clearCached((error) => {
+							if (error)
+								Env.log.e("Failed to clear cache", error);
+							else
+								Env.clearBrowserCache(this.app);
+						});
+					}
+				});
+			}
+		});
 	}
 
 	async onunload() {
@@ -126,7 +129,7 @@ export default class ComeDownPlugin extends Plugin {
 			if (pluginDir) {
 				this.cacheDirBacking = normalizePath(`${pluginDir}/cache`);
 				this.gitIgnorePath = normalizePath(`${this.cacheDirBacking}/.gitignore`);
-				this.cacheMetadataPath = normalizePath(`${pluginDir}/cache.json`);
+				this.cacheMetadataPath = normalizePath(pluginDir + "/" + PluginFile.Dynamic.CACHE.NAME + PluginFile.Dynamic.CACHE.EXT);
 			}
 			else {
 				const errorMsg = `Cannot load because plugin directory is unknown`;
@@ -161,6 +164,58 @@ export default class ComeDownPlugin extends Plugin {
 			await this.app.vault.adapter.remove(this.gitIgnorePath);
 	}
 
+	/**
+		1. **Suffixes or Infixes Added to the Base Name**: This is the most common pattern. The original filename is preserved at ti inserted between them.
+			- {filename} (conflicted copy) .{extension} (Dropbox)
+			- {filename}-conflict-{timestamp}.{extension) (Syncthing)
+			- {filename)_conflict-{timestamp}.{extension} (Nextcloud)
+		2. **Suffixes Appended to the Full Filename**: In this pattern, the conflict marker is added after the original extension.
+			- {filename}.{extension}.Conflict (Resilio Sync)
+			- {filename}.{extension).orig (Git)
+		3. **Prefixes Added to the Filename**: Some services, like Google Drive, might prepend text to the filename.
+			-	Copy of {filename). {extension)
+	 */
+	private async removeSyncConflictFiles() {
+		if (this.manifest.dir === undefined)
+			return;
+
+		const doNotDeleteFilter = (path: string) => {
+			const info = File.getPathInfo(path);
+			if (info.filename === PluginFile.Static.MAIN || info.filename === PluginFile.Static.MANIFEST || info.filename === PluginFile.Static.STYLES)
+				return false;
+			else if (info.basename === PluginFile.Dynamic.DATA.NAME && info.extension === PluginFile.Dynamic.DATA.EXT)
+				return false;
+			else if (info.basename === PluginFile.Dynamic.CACHE.NAME && info.extension === PluginFile.Dynamic.CACHE.EXT)
+				return false;
+			else
+				return true;
+		};
+
+		try {
+
+			const removedFiles: string[] = [];
+			const listed = await this.app.vault.adapter.list(this.manifest.dir);
+
+			for (const path of listed.files.filter(doNotDeleteFilter)) {
+				const info = File.getPathInfo(path);
+				const isDataConflictFile = info.basename.includes(PluginFile.Dynamic.DATA.NAME) && (info.extension.toLowerCase() === PluginFile.Dynamic.DATA.EXT || info.basename.includes(PluginFile.Dynamic.DATA.EXT));
+				const isCacheConflictFile = info.basename.includes(PluginFile.Dynamic.CACHE.NAME) && (info.extension.toLowerCase() === PluginFile.Dynamic.CACHE.EXT || info.basename.includes(PluginFile.Dynamic.CACHE.EXT));
+
+				if (isDataConflictFile || isCacheConflictFile) {
+					Env.log.i("Detected sync conflict file. Deleting:", info.filename);
+					await this.app.vault.adapter.remove(path);
+					removedFiles.push(info.filename);
+				}
+			};
+
+			if (this.settingsManager.settings.noticeOnDeleteSyncConflictFile && removedFiles.length > 0)
+				new Notice(`Found ${removedFiles.length} sync conflict files which were deleted.`, 0, false);
+
+		} catch (e) {
+			Env.log.e(e);
+		}
+	}
+
 	private editorViewUpdateListener(update: ViewUpdate) {
 		Env.log.d("Plugin:editorViewUpdateListener");
 
@@ -188,7 +243,7 @@ export default class ComeDownPlugin extends Plugin {
 			else {
 
 				pass.handleRequestingAndSucceeded(remainingElements);
-				pass.handleImagesNotInCurrentDOM();
+				pass.handleImagesNotInCurrentDOM([...imagesToProcess, ...remainingElements]);
 
 				// Special case when the user deletes an existing embed and all other image elements were filtered out: there are either no other embeds or all the other are already done.
 				// Even when there are no more images to display, the user might remove image embeds, which needs to be removed from the cache as well.
@@ -228,7 +283,7 @@ export default class ComeDownPlugin extends Plugin {
 		pass.enqueue(async () => {
 			pass.log(pass.logMsg("Running in serial queue."));
 
-			const readerContainerEl = ObsAssistant.readerContainerEl(pass.contentEl);
+			const readerContainerEl = ObsAssistant.readerContainerEl(pass.contentEl ?? pass.containerEl);
 			Env.assert(readerContainerEl);
 			if (readerContainerEl === null) {
 				pass.log(pass.abortLogMsg());
@@ -292,8 +347,7 @@ export default class ComeDownPlugin extends Plugin {
 		remainingRequestGroups.forEach((requestGroup) => {
 
 			for (const imageElement of requestGroup.imageElements) {
-				HtmlAssistant.setCacheState(imageElement, HTMLElementCacheState.REQUESTING_DOWNLOADING);
-				HtmlAssistant.setLoadingIcon(imageElement);
+				HtmlAssistant.setLoading(imageElement);
 				imageElement.setAttribute(HTMLElementAttribute.ALT, "Loading...");
 			};
 
@@ -385,7 +439,7 @@ export default class ComeDownPlugin extends Plugin {
 			imageElements.forEach((imageElement) => {
 				HtmlAssistant.setCacheState(imageElement, HTMLElementCacheState.REQUESTING);
 
-				const src = HtmlAssistant.imageElementOriginalSrc(imageElement);
+				const src = HtmlAssistant.originalSrc(imageElement, true);
 
 				if (src) {
 					const key = CacheManager.createCacheKeyFromOriginalSrc(src);
@@ -437,3 +491,21 @@ interface RequestGroup {
 		*/
 	cacheFileFound: boolean,
 }
+
+const PluginFile = {
+	Static: {
+		MANIFEST: "manifest.json",
+		MAIN: "main.js",
+		STYLES: "styles.css",
+	} as const,
+	Dynamic: {
+		DATA: {
+			NAME: "data",
+			EXT: ".json",
+		} as const,
+		CACHE: {
+			NAME: "cache",
+			EXT: ".json",
+		} as const,
+	} as const,
+} as const;

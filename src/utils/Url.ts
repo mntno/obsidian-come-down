@@ -2,97 +2,118 @@ import { Env } from "../Env";
 
 export class Url {
 
-  /**
+	/**
 		* These are case-sensitive. Use with {@link normalizedHeaders}.
 		*/
-  public static readonly RESPONSE_HEADER_LOWERCASE = {
-    contentType: "Content-Type".toLowerCase(),
-    contentLength: "Content-Length".toLowerCase(),
-    cacheControl: "Cache-Control".toLowerCase(),
-    expires: "Expires".toLowerCase(),
-  } as const;
+	public static readonly RESPONSE_HEADER_LOWERCASE = {
+		contentType: "Content-Type".toLowerCase(),
+		contentLength: "Content-Length".toLowerCase(),
+		cacheControl: "Cache-Control".toLowerCase(),
+		expires: "Expires".toLowerCase(),
+	} as const;
 
-  public static readonly CACHE_CONTROL_LOWERCASE = {
-    noStore: "no-store",
-  } as const;
+	public static readonly CACHE_CONTROL_LOWERCASE = {
+		noStore: "no-store",
+	} as const;
 
-  /**
+	/**
 		* Normalize headers to make sure to, e.g., find both `Content-Type` and `content-type`.
 		* Also ignores empty strings and trims.
 		*/
-  public static normalizeHeaders(headers: Record<string, string>): Record<string, string> {
-    const normalizedHeaders: Record<string, string> = {};
+	public static normalizeHeaders(headers: Record<string, string>): Record<string, string> {
+		const normalizedHeaders: Record<string, string> = {};
 
-    for (const key in headers) {
-      const value = headers[key];
-      if (key.length > 0 && value !== undefined) {
-        normalizedHeaders[key.toLowerCase().trim()] = value;
-      }
-    }
+		for (const key in headers) {
+			const value = headers[key];
+			if (key.length > 0 && value !== undefined) {
+				normalizedHeaders[key.toLowerCase().trim()] = value;
+			}
+		}
 
-    return normalizedHeaders;
-  }
+		return normalizedHeaders;
+	}
 
-  public static isValid(url: string): boolean {
-    return url && URL.canParse(url) ? true : false;
-  }
+	/** @returns A trimmed {@link url} if {@link url} is a non-empty string. */
+	public static normalizeUrl(url: string | null | undefined): string | null {
+		return url?.trim() || null; // If left part evaluates to `undefined` or empty string, the expression `undefined || null` correctly evaluates to `null`.
+	}
 
-  /** These are not relevant: ftp, mailto, tel, ws: and wss: */
-  public static isExternal(src: string): boolean {
-    try {
-      const url = new URL(src);
-      return url.protocol === "http:" || url.protocol === "https:";
-    } catch (error) {
-      return false;
-    }
-  }
+	/**
+		* @param src
+		* @param success
+		* @returns `true` if {@link src} is a valid external url, in which case {@link success} will be invoked with the trimmed value; `false` if {@link src} is falsy, a blob, a local reference, etc.
+		*/
+	public static isValidExternalUrl(src: string | null | undefined, success?: (src: string) => void): boolean {
+		if (Env.str.is(src)) {
+			src = src.trim();
+			if (src.length > 0 && Url.isValid(src) && Url.isExternal(src)) {
+				success?.(src);
+				return true;
+			}
+		}
+		return false;
+	}
 
-  public static isEmbedded(url: string): boolean {
-    return this.isBlob(url) || url.startsWith("data:");
-  }
+	public static isValid(url: string): boolean {
+		return url && URL.canParse(url) ? true : false;
+	}
 
-  public static isBlob(url: string): boolean {
-    return url.startsWith("blob:"); // Note: no slashes
-  }
+	/** These are not relevant: ftp, mailto, tel, ws: and wss: */
+	public static isExternal(src: string): boolean {
+		try {
+			const url = new URL(src);
+			return url.protocol === "http:" || url.protocol === "https:";
+		} catch (error) {
+			return false;
+		}
+	}
 
-  public static isLocal(url: string): boolean {
-    // Slashes are better: e.g., "app:data" or "file:info" are not URLs.
-    return url.startsWith("app://") || url.startsWith("capacitor://") || url.startsWith("file://");
-  }
+	public static isEmbedded(url: string): boolean {
+		return this.isBlob(url) || url.startsWith("data:");
+	}
 
-  public static trimBackslash(url: string): string {
-    return url.endsWith("/") ? url.slice(0, -1) : url;
-  }
+	public static isBlob(url: string): boolean {
+		return url.startsWith("blob:"); // Note: no slashes
+	}
 
-  /** @author Gemini */
-  public static extractFilenameAndExtension(url: string): { filename: string, extension: string } | null {
-    try {
-      const urlObj = new URL(url);
-      const pathname = urlObj.pathname;
+	public static isLocal(url: string): boolean {
+		// Slashes are better: e.g., "app:data" or "file:info" are not URLs.
+		return url.startsWith("app://") || url.startsWith("capacitor://") || url.startsWith("file://");
+	}
 
-      if (!pathname) {
-        return null; // No pathname, cannot extract filename
-      }
+	public static trimBackslash(url: string): string {
+		return url.endsWith("/") ? url.slice(0, -1) : url;
+	}
 
-      const filenameWithExtension = pathname.substring(pathname.lastIndexOf('/') + 1).split('?')[0]; // Remove query params
+	/** @author Gemini */
+	public static extractFilenameAndExtension(url: string): { filename: string, extension: string } | null {
+		try {
+			const urlObj = new URL(url);
+			const pathname = urlObj.pathname;
 
-      if (!filenameWithExtension) {
-        return null; // No filename found
-      }
+			if (!pathname) {
+				return null; // No pathname, cannot extract filename
+			}
 
-      const lastDotIndex = filenameWithExtension.lastIndexOf('.');
+			const filenameWithExtension = pathname.substring(pathname.lastIndexOf('/') + 1).split('?')[0]; // Remove query params
 
-      if (lastDotIndex === -1) {
-        return { filename: filenameWithExtension, extension: '' }; // No extension
-      }
+			if (!filenameWithExtension) {
+				return null; // No filename found
+			}
 
-      const filename = filenameWithExtension.substring(0, lastDotIndex);
-      const extension = filenameWithExtension.substring(lastDotIndex + 1);
+			const lastDotIndex = filenameWithExtension.lastIndexOf('.');
 
-      return { filename, extension };
-    } catch (error) {
-      		Env.log.e(`Error parsing URL: ${error}`);
-      return null; // Invalid URL
-    }
-  }
+			if (lastDotIndex === -1) {
+				return { filename: filenameWithExtension, extension: '' }; // No extension
+			}
+
+			const filename = filenameWithExtension.substring(0, lastDotIndex);
+			const extension = filenameWithExtension.substring(lastDotIndex + 1);
+
+			return { filename, extension };
+		} catch (error) {
+			Env.log.e(`Error parsing URL: ${error}`);
+			return null; // Invalid URL
+		}
+	}
 }

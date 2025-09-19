@@ -86,17 +86,17 @@ export class Workarounds {
 	private static readonly markdownLinkRegex = /(?<!\!)\[.*?\]\((.+?)\)/;
 
 	/**
+		* Since image elements are not available in {@link detectSourcesOfInvalidImageElements}, this method is used with the result of that when the elements are available.
 		*
 		* @param sourcesToIgnore Result of having called {@link detectSourcesOfInvalidImageElements}
 		* @param imageElement
 		* @param src The `src` of the {@link imageElement} parameter. Check existance before calling.
 		* @returns `false` when the {@link imageElement}'s state was set to {@link HTMLElementCacheState.INVALID} and should be filtered out of furter processing.
 		*/
-	public static HandleInvalidImageElements(sourcesToIgnore: string[] | null, imageElement: HTMLImageElement, src: string): boolean {
+	public static handleInvalidImageElements(sourcesToIgnore: string[] | null, imageElement: HTMLImageElement, src: string): boolean {
 		if (sourcesToIgnore) {
 			for (const sourceToIgnore of sourcesToIgnore) {
 				if (Url.trimBackslash(sourceToIgnore) === Url.trimBackslash(src)) {
-					imageElement.removeAttribute(HTMLElementAttribute.SRC); // Shouldn't be necessary but why keep it.
 					HtmlAssistant.setCacheState(imageElement, HTMLElementCacheState.INVALID); // Set to invalid so that the next pass ignores it.
 					return false;
 				}

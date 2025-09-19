@@ -208,9 +208,10 @@ export class CacheManager {
 		*
 		* @param requests Multiple identical {@link CacheRequest} will be reduced to one. References to non-existent caches will be ignored.
 		* @param retainerPath The path to the retainer (file). This is needed to know which retainer to release references, e.g., is {@link requests} is empty. Each {@link CacheRequest#requesterPath} of {@link requests} is expected to be equal to this.
-		* @param requestsToIgnore These will not be touched, i.e., neither retained nor released.
+		* @param options
 		*/
 	public async updateRetainedCaches(requests: CacheRequest[], retainerPath: string, options?: {
+		/** These will not be touched, i.e., neither retained nor released. */
 		requestsToIgnore?: Set<CacheRequest>;
 		/** If `true` will remove any cache references on the associated {@link CacheRetainer|retainer}. */
 		preventReleases?: boolean;

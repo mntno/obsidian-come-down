@@ -22,6 +22,11 @@ export class CodeMirrorAssistant {
 		return syntaxTree(view.state).length === view.state.doc.length;
 	}
 
+	public static findAllImages(view: EditorView, filter?: UrlFilter): ParsedImage[] | null {
+		const tree = CodeMirrorAssistant.ensureSyntaxTree(view);
+		return tree === null ? null : CodeMirrorAssistant.findImagesInTreeRange(view, tree, 0, view.state.doc.length, filter);
+	}
+
 	/**
 		* Finds images outside the viewport of the whole document.
 		*
@@ -30,18 +35,8 @@ export class CodeMirrorAssistant {
 		* @returns `null` if the parser was unable to finish within the specified timeout.
 		*/
 	public static findImagesOutsideViewport(view: EditorView, filter?: UrlFilter): ParsedImage[] | null {
-
-		// 500ms timeout as a safeguard against blocking the UI for too long.
-		const timeout = 500;
-		const tree = ensureSyntaxTree(view.state, view.state.doc.length, timeout);
-
-		if (tree) {
-			return CodeMirrorAssistant.findImagesOutsideViewportInTree(view, tree, filter);
-		}
-		else {
-			Env.log.w(`Timed out parsing full syntax tree for the document (${timeout}ms).`);
-			return null;
-		}
+		const tree = CodeMirrorAssistant.ensureSyntaxTree(view);
+		return tree === null ? null : CodeMirrorAssistant.findImagesOutsideViewportInTree(view, tree, filter);
 	}
 
 	/**
@@ -51,19 +46,24 @@ export class CodeMirrorAssistant {
 		return CodeMirrorAssistant.findImagesOutsideViewportInTree(view, syntaxTree(view.state), filter);
 	}
 
-	private static findImagesOutsideViewportInTree(view: EditorView, tree: Tree, filter?: UrlFilter): ParsedImage[] | null {
+	private static findImagesOutsideViewportInTree(view: EditorView, tree: Tree, filter?: UrlFilter): ParsedImage[] {
 		const viewport = view.viewport;
 
-		//Env.log.d(`findImagesOutsideViewportInTree: from: ${viewport.from}, to ${viewport.to}, length: ${view.state.doc.length}`);
-		//Env.log.d(tree.toString());
+		// Env.log.d(`findImagesOutsideViewportInTree: from: ${viewport.from}, to ${viewport.to}, length: ${view.state.doc.length}`);
+		// Env.log.d(tree.toString());
 		// const now = Env.perf.now();
-		// const allImages = CodeMirrorAssistant.findImagesInTreeRange(view, tree, 0, view.state.doc.length, filter);
+		const allImages = CodeMirrorAssistant.findImagesInTreeRange(view, tree, 0, view.state.doc.length, filter);
 		// Env.perf.log(`allImages ${allImages.length}: ${allImages.map(i => i.src).join("\n\t")}`, now);
 
-		return [
-			...CodeMirrorAssistant.findImagesInTreeRange(view, tree, 0, viewport.from, filter),
-			...CodeMirrorAssistant.findImagesInTreeRange(view, tree, viewport.to, view.state.doc.length, filter),
-		];
+		//return CodeMirrorAssistant.findImagesInTreeRange(view, tree, viewport.from, viewport.to, filter);
+
+		return allImages.filter(image => {
+			const isFullyOutside = image.to <= viewport.from || image.from >= viewport.to;
+			const isCrossingStart = image.from < viewport.from && image.to > viewport.from;
+			const isCrossingEnd = image.from < viewport.to && image.to > viewport.to;
+			Env.dev.assert(isCrossingStart === false && isCrossingEnd === false)
+			return isFullyOutside || isCrossingStart || isCrossingEnd;
+		});
 	}
 
 	/**
@@ -157,7 +157,7 @@ export class CodeMirrorAssistant {
 								const altMatch = htmlText.match(RegEx.HTML_ALT);
 								const alt = altMatch?.[1];
 
-								images.push({src: url, alt, from: current.from, to: endNode.to});
+								images.push({ src: url, alt, from: current.from, to: endNode.to });
 							}
 						}
 					}
@@ -166,6 +166,17 @@ export class CodeMirrorAssistant {
 		});
 
 		return images;
+	}
+
+	private static ensureSyntaxTree(view: EditorView): Tree | null {
+		// 500ms timeout as a safeguard against blocking the UI for too long.
+		const timeout = 500;
+		const tree = ensureSyntaxTree(view.state, view.state.doc.length, timeout);
+
+		if (tree === null)
+			Env.log.w(`Timed out parsing full syntax tree for the document (${timeout}ms).`);
+
+		return tree;
 	}
 }
 

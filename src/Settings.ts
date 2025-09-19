@@ -6,7 +6,9 @@ import { Notice } from "./ui/Notice";
 export interface PluginSettings {
 
 	/** Show a {@link Notice} when file download starts. */
-	noticeOnDownload: boolean
+	noticeOnDownload: boolean;
+	/** Show a {@link Notice} when sync conflict files were detected and deleted. */
+	noticeOnDeleteSyncConflictFile: boolean;
 
 	/** Remove the name of the plugin when showing the download message. */
 	omitNameInNotice: boolean;
@@ -31,6 +33,7 @@ export class SettingsManager {
 
 	static readonly DEFAULT_SETTINGS: PluginSettings = {
 		noticeOnDownload: true,
+		noticeOnDeleteSyncConflictFile: false,
 		omitNameInNotice: false,
 		gitIgnoreCacheDir: true,
 		showDebugInfo: false,

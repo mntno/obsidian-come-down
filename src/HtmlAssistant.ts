@@ -7,25 +7,19 @@ export const enum HTMLElementCacheState {
 	ORIGINAL = 0,
 
 	/**
-		* The original src has been removed. Element is ready to request.
+		* The original src url has been removed. Element is ready to request.
 		*
 		* A `data` attribute has been set on the element with the original src, get it with {@link HtmlAssistant.originalSrc}.
 		*/
 	ORIGINAL_SRC_REMOVED,
 
-	/**
-		* Requesting cache. If cache found, will be changed to {@link CACHE_SUCCEEDED}; if not, to {@link REQUESTING_DOWNLOADING}.
-		*/
+	/** Requesting cache. If cache found, will be changed to {@link CACHE_SUCCEEDED}; if not, to {@link REQUESTING_DOWNLOADING}. */
 	REQUESTING,
 
-	/**
-		* Cache item was not found. Downloading.
-		*/
+	/** Cache item was not found. Downloading. */
 	REQUESTING_DOWNLOADING,
 
-	/**
-		* The element's src is now pointing to the locally cached item, whether it was fetched from cache or downloaded.
-		*/
+	/** The element's src is now pointing to the locally cached item, whether it was fetched from cache or downloaded. */
 	CACHE_SUCCEEDED,
 
 	/**
@@ -147,16 +141,24 @@ export class HtmlAssistant {
 		delete element.dataset.comeDownState;
 	}
 
-	public static setFailed(element: HTMLElement) {
-		this.setCacheState(element, HTMLElementCacheState.CACHE_FAILED);
-		if (element instanceof HTMLImageElement)
-			this.setIcon(element, this.failedIcon);
+	public static setLoading(imageElement: HTMLImageElement) {
+		HtmlAssistant.setCacheState(imageElement, HTMLElementCacheState.REQUESTING_DOWNLOADING);
+		HtmlAssistant.setIcon(imageElement, HtmlAssistant.loadingIcon);
 	}
 
-	public static setInvalid(element: HTMLElement) {
-		this.setCacheState(element, HTMLElementCacheState.INVALID);
-		if (element instanceof HTMLImageElement)
-			this.setIcon(element, this.failedIcon);
+	public static setFailed(element: HTMLImageElement) {
+		HtmlAssistant.setCacheState(element, HTMLElementCacheState.CACHE_FAILED);
+		HtmlAssistant.setIcon(element, HtmlAssistant.failedIcon);
+	}
+
+	public static setInvalid(element: HTMLImageElement) {
+		HtmlAssistant.setCacheState(element, HTMLElementCacheState.INVALID);
+		HtmlAssistant.setIcon(element, HtmlAssistant.failedIcon);
+	}
+
+	private static setCanceled(element: HTMLImageElement) {
+		HtmlAssistant.setCacheState(element, HTMLElementCacheState.ORIGINAL_SRC_REMOVED);
+		HtmlAssistant.setIcon(element, HtmlAssistant.emptyIcon);
 	}
 
 	/**
@@ -180,13 +182,14 @@ export class HtmlAssistant {
 			if (src === null)
 				return false;
 
-			if (Env.isDev && src && Url.isBlob(src)) {
-				console.warn(`cancelImageLoading: Setting dataset to blob.`);
-			}
+			if (HtmlAssistant.cacheState(imageElement) === HTMLElementCacheState.ORIGINAL_SRC_REMOVED)
+				return false;
 
-			HtmlAssistant.setOriginalSrc(imageElement, src);
-			imageElement.removeAttribute(HTMLElementAttribute.SRC);
-			HtmlAssistant.setCacheState(imageElement, HTMLElementCacheState.ORIGINAL_SRC_REMOVED);
+			if (Env.isDev && src && Url.isBlob(src))
+				console.warn(`cancelImageLoading: Setting dataset to blob.`);
+
+			imageElement.dataset.comeDownOriginalSource = src;
+			HtmlAssistant.setCanceled(imageElement);
 
 			return true;
 		};
@@ -200,33 +203,36 @@ export class HtmlAssistant {
 		Env.log.d(`\tCancelled ${counter} of ${imageElements.length}.`);
 	}
 
-	/** @returns The trimmed `src` attribute, or `null` if it's missing or empty. */
-	public static getSrc(element: HTMLImageElement): string | null {
-		return element.getAttribute(HTMLElementAttribute.SRC)?.trim() || null; // If left part evaluates to `undefined` (or empty string), the expression `undefined || null` correctly evaluates to `null`.
-	}
-
-	private static setOriginalSrc(element: HTMLImageElement, src: string) {
-		Env.assert(Env.str.is(src) && src.length > 0, "Must be a non-empty string");
-		element.dataset.comeDownOriginalSource = src.trim();
-	}
-
-	/** @returns If {@link setOriginalSrc} was used at assignment, the value returned here is a trimmed, non-empty string; or `null` if no original source exists on the element. */
-	public static originalSrc(element: HTMLImageElement) {
-		return element.dataset.comeDownOriginalSource ?? null;
-	}
-
 	/**
-		* Based on what's available in the HTML, returns image element's actual original source.
-		* @returns The src or `null` if not available.
+		* First checks if state is set to {@link HTMLElementCacheState.ORIGINAL_SRC_REMOVED}, if so, returns `true`.
+		* If not, checks if the images `src` is a valid, external URL.
+		*
+		* Because images that need to be processed may have been set to icons (non-external urls), it is preferred to use this method rather than {@link Url.isValidExternalUrl} directly.
 		*/
-	public static imageElementOriginalSrc(element: HTMLImageElement): string | null {
+	public static isImageToProcess(imageElement: HTMLImageElement) {
+		// Check if it's already been canceled before checking the url.
+		if (HtmlAssistant.cacheState(imageElement) === HTMLElementCacheState.ORIGINAL_SRC_REMOVED)
+			return true;
 
-		const os = element.dataset.comeDownOriginalSource;
-		if (os)
-			return os;
+		const src = HtmlAssistant.getSrc(imageElement);
+		if (Url.isValidExternalUrl(src))
+			return true;
 
-		const hasAttribute = element.hasAttribute(HTMLElementAttribute.SRC);
-		return hasAttribute && element.src.trim().length > 0 ? element.src : null;
+		return false;
+	}
+
+	/** @returns The value of calling {@link Url.normalizeUrl} on the `src` of the {@link element}. */
+	public static getSrc(element: HTMLImageElement): string | null {
+		return Url.normalizeUrl(element.getAttribute(HTMLElementAttribute.SRC));
+	}
+
+	/** @returns A trimmed, non-empty string; or `null` if no original source exists on the element. */
+	public static originalSrc(element: HTMLImageElement, checkSrc: boolean = false): string | null {
+		const src = element.dataset.comeDownOriginalSource ?? null;
+		if (src === null && checkSrc && HtmlAssistant.cacheState(element) === HTMLElementCacheState.ORIGINAL)
+			return HtmlAssistant.getSrc(element)
+		else
+			return src;
 	}
 
 	/**
@@ -242,12 +248,14 @@ export class HtmlAssistant {
 	public static findAllImageElements(element: HTMLElement, requireSrcAttribute: boolean = true, filter?: (imageElement: HTMLImageElement) => boolean): HTMLImageElement[] {
 		let imageElements;
 		if (requireSrcAttribute)
-			imageElements = element.findAll('img[src]:not([aria-hidden="true"])') as HTMLImageElement[];
+			imageElements = element.findAll(HtmlAssistant.FIND_ALL_IMG_SELECTOR_REQ_SRC) as HTMLImageElement[];
 		else
-			imageElements = element.findAll('img:not([aria-hidden="true"])') as HTMLImageElement[];
+			imageElements = element.findAll(HtmlAssistant.FIND_ALL_IMG_SELECTOR) as HTMLImageElement[];
 
 		return filter ? imageElements.filter((imageElement) => filter(imageElement)) : imageElements;
 	}
+	private static readonly FIND_ALL_IMG_SELECTOR_REQ_SRC = 'img[src]:not([aria-hidden="true"])';
+	private static readonly FIND_ALL_IMG_SELECTOR = 'img:not([aria-hidden="true"])';
 
 	/**
 		*
@@ -266,7 +274,7 @@ export class HtmlAssistant {
 		* @param src Url to a local resource. Would start with `app://`, `capacitor://`, or perhaps `file://`
 		* @returns On failure, a {@link HtmlAssistantFileNotFoundError} if it thinks the a give local file doesn't exist; otherwise a normal Error.
 	 */
-	public static async createBlobObjectUrl(src: string): Promise<string | Error> {
+	private static async createBlobObjectUrl(src: string): Promise<string | Error> {
 		let response;
 
 		try {
@@ -294,10 +302,6 @@ export class HtmlAssistant {
 		else {
 			return new Error(`Unsuccessful response: ${response.status} ${response.statusText}`);
 		}
-	}
-
-	public static setLoadingIcon(imageElement: HTMLImageElement) {
-		this.setIcon(imageElement, this.loadingIcon);
 	}
 
 	private static setIcon(imageElement: HTMLImageElement, blob: Blob) {
@@ -336,6 +340,13 @@ export class HtmlAssistant {
 		return this.failedIconBacking;
 	}
 	private static failedIconBacking?: Blob;
+
+	private static get emptyIcon(): Blob {
+		if (this.emptyIconBacking === undefined)
+			this.emptyIconBacking = new Blob(['<svg width="0" height="0" xmlns="http://www.w3.org/2000/svg"></svg>'], { type: "image/svg+xml" });
+		return this.emptyIconBacking;
+	}
+	private static emptyIconBacking?: Blob;
 }
 
 class HtmlAssistantFileNotFoundError extends Error {

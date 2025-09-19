@@ -1,8 +1,8 @@
-import { EditorView, ViewUpdate } from "@codemirror/view";
-import { App, MarkdownPostProcessorContext, MarkdownView, TFile } from "obsidian";
+import { ViewUpdate } from "@codemirror/view";
+import { App, ItemView, MarkdownPostProcessorContext, MarkdownView, TFile, View } from "obsidian";
 import { CacheManager, CacheRequest } from "./CacheManager";
 import { Env, LoggerFn } from "./Env";
-import { HtmlAssistant, HTMLElementAttribute, HTMLElementCacheState } from "./HtmlAssistant";
+import { HtmlAssistant, HTMLElementCacheState } from "./HtmlAssistant";
 import { CodeMirrorAssistant } from "./utils/CodeMirrorAssistant";
 import { ObsAssistant, ObsViewMode } from "./utils/ObsAssistant";
 import { Url } from "./utils/Url";
@@ -10,25 +10,29 @@ import { Workarounds } from "./Workarounds";
 
 export class ProcessingPass {
 
-	private readonly markdownView: MarkdownView;
+	private readonly view: View;
+	private readonly itemView?: ItemView;
+	private readonly markdownView?: MarkdownView;
 	public readonly associatedFile: TFile;
-	public readonly log: LoggerFn;
 
 	/** `true` when invoked by the Markdown post processor. */
 	public readonly isInPostProcessingPass: boolean;
 	public readonly mode: ObsViewMode;
 	private readonly viewUpdate?: ViewUpdate;
+	public readonly log: LoggerFn;
 
 	public readonly passID: number;
 	private static updatePassID: number = 0;
 	private static postProcessorPassID: number = 0;
 
-	private constructor(id: number, isInPostProcessingPass: boolean, markdownView: MarkdownView, file: TFile, log: LoggerFn, viewUpdate?: ViewUpdate) {
+	private constructor(id: number, isInPostProcessingPass: boolean, view: View, file: TFile, log: LoggerFn, viewUpdate?: ViewUpdate) {
 		this.passID = id;
 		this.isInPostProcessingPass = isInPostProcessingPass;
-		this.markdownView = markdownView;
+		this.view = view;
+		this.itemView = view instanceof ItemView ? view : undefined;
+		this.markdownView = view instanceof MarkdownView ? view : undefined;
 		this.associatedFile = file;
-		this.mode = ObsAssistant.viewMode(markdownView);
+		this.mode = ObsAssistant.viewMode(view);
 		this.viewUpdate = viewUpdate;
 		this.log = log;
 	}
@@ -45,15 +49,17 @@ export class ProcessingPass {
 			abortInSourceMode = true,
 		} = options || {};
 
-		const markdownView = app.workspace.getActiveViewOfType(MarkdownView);
-		if (markdownView === null || markdownView.file === null) {
+		const view = app.workspace.getActiveViewOfType(View);
+		const associatedFile = ObsAssistant.getFileFromView(view);
+
+		if (view === null || associatedFile === null) {
 			ProcessingPass.handleNoAssociatedFile(viewUpdate, thisID, log);
 			options?.noFile?.(thisID, log);
 			log(ProcessingPass.abortLogMsg(true, thisID));
 			return null;
 		}
 
-		const instance = new this(thisID, false, markdownView, markdownView.file, log, viewUpdate);
+		const instance = new this(thisID, false, view, associatedFile, log, viewUpdate);
 
 		if (abortInSourceMode && instance.mode === "source") {
 			log(ProcessingPass.abortLogMsg(true, thisID));
@@ -91,16 +97,17 @@ export class ProcessingPass {
 		const log = Env.log.read;
 		log(Env.dev.icon.POST_PROCESS_PASS, "Start post processor pass ➡️🚪", ProcessingPass.idString(thisID));
 
-		let associatedFile: TFile | null = null;
-		const markdownView = app.workspace.getActiveViewOfType(MarkdownView);
+		const view = app.workspace.getActiveViewOfType(View);
+		Env.dev.runDev(() => {
+			log(Env.dev.icon.POST_PROCESS_PASS, "\tView type:", view !== null ? ObsAssistant.viewClassTypeAsSting(view) + " / " + view.getViewType() : "No view available");
+		});
 
-		if (markdownView !== null)
-			associatedFile = markdownView.file;
+		let associatedFile = ObsAssistant.getFileFromView(view);
 		if (associatedFile === null)
 			associatedFile = app.vault.getFileByPath(context.sourcePath);
 
-		if (markdownView !== null && associatedFile !== null) {
-			return new this(thisID, true, markdownView, associatedFile, log);
+		if (view !== null && associatedFile !== null) {
+			return new this(thisID, true, view, associatedFile, log);
 		}
 		else {
 			log(ProcessingPass.abortLogMsg(false, thisID));
@@ -160,14 +167,17 @@ export class ProcessingPass {
 		return !this.isInPostProcessingPass;
 	}
 
-	/** @returns `<div class="view-content">` which is a descendant of {@link containerEl} and the parent of both the reader and source container elements. */
-	public get contentEl() {
-		return this.markdownView.contentEl;
+	/**
+		* Only available if the {@link View} is an {@link ItemView}. If traversing descendants, {@link containerEl} can also be used.
+		* @returns `<div class="view-content">` which is a descendant of {@link containerEl} and the parent of both the reader and source container elements.
+		*/
+	public get contentEl(): HTMLElement | null {
+		return this.itemView?.contentEl ?? null;
 	}
 
-	/** @returns The element `<div class="workspace-leaf-content" data-type="markdown" data-mode="X">` where `X` is `preview` if in reader view or `source` otherwise. */
-	public get containerEl() {
-		return this.markdownView.containerEl;
+	/** @returns The element `<div class="workspace-leaf-content" data-type="markdown" data-mode="X">` where `X` is `preview` if in reader view or `source` otherwise. {@link contentEl} is a descendant. */
+	public get containerEl(): HTMLElement {
+		return this.view.containerEl;
 	}
 
 	public retainCache(urlOrCache: string | CacheRequest) {
@@ -204,14 +214,14 @@ export class ProcessingPass {
 
 		// There is no file to work with. All that can be done is to cancel loading.
 		const imageElements = HtmlAssistant.findAllImageElements(update.view.contentDOM, true, (imageElement) => {
-			const src = imageElement.getAttribute(HTMLElementAttribute.SRC);
+			const src = HtmlAssistant.getSrc(imageElement);
 
 			// Filter out image elements without a src or invalid.
-			if (src === null || !Workarounds.HandleInvalidImageElements(sourcesToIgnore, imageElement, src))
+			if (src === null || !Workarounds.handleInvalidImageElements(sourcesToIgnore, imageElement, src))
 				return false;
 
 			// Allow image elements with external urls through so they can be cancelled.
-			return Logic.isValidExternalUrl(src);
+			return HtmlAssistant.isImageToProcess(imageElement);
 		});
 
 		HtmlAssistant.cancelImageLoading(imageElements);
@@ -220,20 +230,29 @@ export class ProcessingPass {
 	/**
 		* `currentDOM` only includes nodes visible in the viewport (plus a margin).
 		* This method makes sure the remaining images in the note are retained to prevent them from being deleted.
+		*
+		* @param imageElementsInDom Images in viewport/DOM returned by {@link findRelevantImagesToProcessViewUpdate} that have **already been canceled**.
 		* @returns
 		*/
-	public handleImagesNotInCurrentDOM() {
+	public handleImagesNotInCurrentDOM(imageElementsInDom: HTMLImageElement[]) {
 		Env.assert(this.viewUpdate);
 		if (!this.viewUpdate)
 			return;
 
-		const imagesOutsideViewport = CodeMirrorAssistant.findImagesOutsideViewport(this.viewUpdate.view, (url) => Logic.isValidExternalUrl(url));
-		this.log(Env.dev.thunkedStr(() => this.logMsg("Found " + imagesOutsideViewport?.length + " images outside viewport:" + imagesOutsideViewport?.map(f => f.src).join(", "))));
+		const imgSrcInDom = imageElementsInDom.map(el => {
+			Env.dev.assert(HtmlAssistant.cacheState(el) !== HTMLElementCacheState.ORIGINAL);
+			return HtmlAssistant.originalSrc(el, false);
+		});
 
-		if (imagesOutsideViewport) {
-			for (const image of imagesOutsideViewport)
-				Logic.isValidExternalUrl(image.src, (src) => this.retainCache(image.src));
-		}
+		const imagesOutsideViewport = CodeMirrorAssistant.findAllImages(this.viewUpdate.view, (url) => {
+			const normalizedUrl = Url.normalizeUrl(url);
+			if (imgSrcInDom.includes(normalizedUrl))
+				return false;
+			return Url.isValidExternalUrl(normalizedUrl); // These urls might be local.
+		});
+
+		this.log(Env.dev.thunkedStr(() => this.logMsg("Found " + imagesOutsideViewport?.length + " images outside viewport:" + imagesOutsideViewport?.map(f => f.src).join(", "))));
+		imagesOutsideViewport?.forEach(image => this.retainCache(image.src));
 	}
 
 	public static findRelevantImagesToProcessInPostProcessor(element: HTMLElement, _context: MarkdownPostProcessorContext, requireSrcAttribute: boolean): [imageElementsToProcess: HTMLImageElement[], remainingElements: HTMLImageElement[]] {
@@ -242,8 +261,7 @@ export class ProcessingPass {
 		const elementsToProcess: HTMLImageElement[] = [];
 
 		const imagesToCancelFilter = (imageElement: HTMLImageElement) => {
-			const src = HtmlAssistant.getSrc(imageElement);
-			return Logic.filterIrrelevantCacheStates(imageElement) || Logic.isValidExternalUrl(src);
+			return Logic.filterIrrelevantCacheStates(imageElement) || HtmlAssistant.isImageToProcess(imageElement);
 		};
 
 		for (const imageElement of imageElements) {
@@ -272,15 +290,16 @@ export class ProcessingPass {
 			if (src === null)
 				return Logic.filterIrrelevantCacheStates(imageElement);
 
+			// 3. Check if this image element should be ignored.
+			if (!Workarounds.handleInvalidImageElements(sourcesToIgnore, imageElement, src))
+				return false;
+
 			// 3. Only external urls are relevant.
-			if (!Logic.isValidExternalUrl(src))
+			// 		If not negating and returning false, local urls won't be cached here
+			if (!HtmlAssistant.isImageToProcess(imageElement))
 				return false;
 
-			// 4. Filter out invalid.
-			if (!Workarounds.HandleInvalidImageElements(sourcesToIgnore, imageElement, src))
-				return false;
-
-			// 5. Remove all states that have passed this stage already.
+			// 4. At this stage filtering based on urls should be done and here just look at states to remove all states that have passed this stage already.
 			return Logic.filterIrrelevantCacheStates(imageElement);
 		};
 
@@ -309,7 +328,7 @@ export class ProcessingPass {
 		* @param imageElement
 		*/
 	private checkIfUrlChanged(update: ViewUpdate, imageElement: HTMLImageElement) {
-		Env.log.d(this.logMsg("ProcessingPass:resetIfNeeded"), update.docChanged, HtmlAssistant.cacheState(imageElement), HtmlAssistant.getSrc(imageElement), Logic.isValidExternalUrl(HtmlAssistant.getSrc(imageElement)));
+		Env.log.d(this.logMsg("ProcessingPass:resetIfNeeded"), update.docChanged, HtmlAssistant.cacheState(imageElement), HtmlAssistant.getSrc(imageElement), Url.isValidExternalUrl(HtmlAssistant.getSrc(imageElement)));
 
 		// These all come together to reveal that the src has changed and thus is treated as a new image.
 		// - `update.docChanged`: user edited
@@ -318,7 +337,7 @@ export class ProcessingPass {
 		// Therefore the src was modified, which is tantamount to a separate, added image element, so the state need to be reset and it will be treated as such.
 		// The cache reference will be released as it is not retained now.
 
-		if (update.docChanged && HtmlAssistant.cacheState(imageElement) != HTMLElementCacheState.ORIGINAL && Logic.isValidExternalUrl(HtmlAssistant.getSrc(imageElement))) {
+		if (update.docChanged && HtmlAssistant.cacheState(imageElement) != HTMLElementCacheState.ORIGINAL && Url.isValidExternalUrl(HtmlAssistant.getSrc(imageElement))) {
 			this.log(Env.dev.thunkedStr(() => this.logMsg(`Url changed on image from ${HtmlAssistant.originalSrc(imageElement)} to ${HtmlAssistant.getSrc(imageElement)}`)));
 			HtmlAssistant.resetElement(imageElement); // Set state to "untouched".
 		}
@@ -372,29 +391,6 @@ export class ProcessingPass {
 }
 
 class Logic {
-	private readonly logger: ProcessingPass;
-
-	constructor(logger: ProcessingPass) {
-		this.logger = logger;
-	}
-
-	/**
-		* @param src
-		* @param success
-		* @returns `true` if {@link src} is relevant and should be processed, in which case {@link success} will be invoked with the trimmed value.
-		*/
-	public static isValidExternalUrl(src: string | null | undefined, success?: (src: string) => void): boolean {
-		// not `undefined`, `null`, or empty string.
-		if (src) {
-			src = src.trim();
-			if (src.length > 0 && Url.isValid(src) && Url.isExternal(src)) {
-				success?.(src);
-				return true;
-			}
-		}
-
-		return false;
-	}
 
 	/**
 		* Remove requesting, downloading, done, and invalid.
