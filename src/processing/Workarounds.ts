@@ -1,7 +1,7 @@
 import { ViewUpdate } from "@codemirror/view";
-import { Env } from "./Env";
-import { HtmlAssistant, HTMLElementAttribute, HTMLElementCacheState } from "./HtmlAssistant";
-import { Url } from "./utils/Url";
+import { Env } from "Env";
+import { HtmlAssistant, HTMLElementAttribute, HTMLElementCacheState } from "processing/HtmlAssistant";
+import { Url } from "utils/Url";
 
 export class Workarounds {
 	/**

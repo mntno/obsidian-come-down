@@ -1,7 +1,7 @@
 import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
-import { EditorView } from "@codemirror/view";
+import { EditorView, ViewUpdate } from "@codemirror/view";
 import { SyntaxNodeRef, Tree } from "@lezer/common";
-import { Env } from "../Env";
+import { Env } from "Env";
 
 export interface ParsedImage {
 	src: string;
@@ -13,6 +13,10 @@ export interface ParsedImage {
 type UrlFilter = (url: string) => boolean;
 
 export class CodeMirrorAssistant {
+
+	public static contentDomFromViewUpdate(viewUpdate: ViewUpdate) {
+		return viewUpdate.view.contentDOM;
+	}
 
 	/**
 		* Checks if the syntax tree currently available in the editor state covers the entire document.
@@ -79,85 +83,86 @@ export class CodeMirrorAssistant {
 		tree.iterate({
 			from,
 			to,
-			enter: (node: SyntaxNodeRef) => {
+			enter: (nodeRef) => {
+				const node = nodeRef.node;
 
-				// Frontmatter and code blocks cannot contain (rendered) images.
-				if (node.name.includes(NodeName.CODEBLOCK_NODE_PART) || node.name === NodeName.FRONTMATTER_DEF)
+				if (node.name.includes(NodeName.CODEBLOCK_NODE_PART) || node.name.startsWith(NodeName.FRONTMATTER_DEF)) {
 					return false;
+				}
 
-				// Handle markdown images via tree structure (fast path)
-				if (node.name === NodeName.URL) {
-					const urlNode = node.node;
+				// --- Markdown Image Logic ---
+				if (node.name.startsWith(NodeName.IMAGE_MARKER)) {
+					if (images.some(img => node.from >= img.from && node.to <= img.to)) return;
 
-					const closingParen = urlNode.nextSibling;
-					if (closingParen?.name !== NodeName.URL_FORMATTING)
-						return;
+					let urlNode = null;
+					let altNode = null;
+					let closingParenNode = null;
 
-					// Extract and filter URL as soon as possible
-					const rawUrl = view.state.doc.sliceString(urlNode.from, urlNode.to);
-					const urlParts = rawUrl.split(RegEx.URL_SPLIT);
-					const url = urlParts.length > 0 ? urlParts[0] : undefined; // Extract just the URL part, excluding possible appended titles and dimensions, e.g.,: `https://example.com/image3.gif "This is a title"`, `https://example.com/image4.jpg =300x200`, `https://example.com/image7.webp "Title text" =250x150`.
-					if (url === undefined)
-						return;
+					let currentNode = node.nextSibling;
+					while (currentNode) {
+						if (currentNode.name.startsWith(NodeName.IMAGE_MARKER)) break;
 
-					if (filter && !filter(url))
-						return;
+						const isUrlNode = currentNode.name.endsWith(NodeName.URL) && !currentNode.name.includes(NodeName.FORMATTING);
+						const isAltNode = currentNode.name.startsWith(NodeName.IMAGE_ALT_LINK);
 
-					// Pattern 1: ![alt](url)
-					const p1 = urlNode.prevSibling; // (
-					const p2 = p1?.prevSibling; // ]
-					const p3 = p2?.prevSibling; // alt
-					const p4 = p3?.prevSibling; // [
-					const p5 = p4?.prevSibling; // !
-					if (p1?.name === NodeName.URL_FORMATTING &&
-						p2?.name === NodeName.IMAGE_ALT_LINK_FORMATTING &&
-						p3?.name === NodeName.IMAGE_ALT_LINK &&
-						p4?.name === NodeName.IMAGE_ALT_LINK_FORMATTING &&
-						p5?.name === NodeName.IMAGE_MARKER) {
-						const alt = view.state.doc.sliceString(p3.from, p3.to);
-						images.push({ src: url, alt, from: p5.from, to: closingParen.to });
-						return;
+						if (!urlNode && isUrlNode) {
+							urlNode = currentNode;
+						} else if (!altNode && isAltNode) {
+							altNode = currentNode;
+						}
+
+						if (urlNode) {
+							const isUrlFormatting = currentNode.name.startsWith(NodeName.LINK_FORMATTING) && currentNode.name.endsWith(NodeName.URL);
+							const isAfterUrl = currentNode.from > urlNode.from;
+							if (isUrlFormatting && isAfterUrl) {
+								closingParenNode = currentNode;
+								break;
+							}
+						}
+						currentNode = currentNode.nextSibling;
 					}
 
-					// Pattern 2: ![](url)
-					const s1 = urlNode.prevSibling; // ](
-					const s2 = s1?.prevSibling; // [
-					const s3 = s2?.prevSibling; // !
-					if (s1?.name === NodeName.URL_FORMATTING &&
-						s2?.name === NodeName.IMAGE_ALT_LINK_FORMATTING &&
-						s3?.name === NodeName.IMAGE_MARKER) {
-						images.push({ src: url, alt: undefined, from: s3.from, to: closingParen.to });
-						return;
+					if (urlNode && closingParenNode) {
+						const rawUrl = view.state.doc.sliceString(urlNode.from, urlNode.to);
+						const urlParts = rawUrl.split(RegEx.URL_SPLIT);
+						const url = urlParts.length > 0 ? urlParts[0] : undefined;
+						if (url === undefined) return;
+
+						if (filter && !filter(url)) return;
+
+						const alt = altNode ? view.state.doc.sliceString(altNode.from, altNode.to) : "";
+
+						images.push({ src: url, alt, from: node.from, to: closingParenNode.to });
 					}
 				}
 
-				// Handle HTML img tags via targeted text parsing
-				if (node.name === NodeName.HTML_BEGIN_TAG) {
-					// Find the complete HTML tag by looking for the closing tag
-					let current = node.node;
-					let endNode = current.nextSibling;
+				// --- HTML Image Logic ---
+				if (node.name.startsWith(NodeName.HTML_BEGIN_TAG)) {
+					if (images.some(img => node.from >= img.from && node.to <= img.to)) return;
 
-					// Navigate to find the closing bracket
-					while (endNode && endNode.name !== NodeName.HTML_END_TAG)
-						endNode = endNode.nextSibling;
+					let endNode = null;
+					let currentNode = node.nextSibling;
+					while(currentNode) {
+						if (currentNode.name.startsWith(NodeName.HTML_END_TAG)) {
+							endNode = currentNode;
+							break;
+						}
+						if (currentNode.name.startsWith(NodeName.HTML_BEGIN_TAG)) break;
+						currentNode = currentNode.nextSibling;
+					}
 
 					if (endNode) {
-						const htmlText = view.state.doc.sliceString(current.from, endNode.to);
-
-						// Only process img tags
-						if (htmlText.includes('<img')) {
-							const srcMatch = htmlText.match(RegEx.HTML_SRC);
+						const text = view.state.doc.sliceString(node.from, endNode.to);
+						if (text.includes("<img")) {
+							const srcMatch = text.match(RegEx.HTML_SRC);
 							if (srcMatch && srcMatch[1]) {
 								const url = srcMatch[1];
+								if (filter && !filter(url)) return;
 
-								// Apply filter early
-								if (filter && !filter(url))
-									return;
-
-								const altMatch = htmlText.match(RegEx.HTML_ALT);
+								const altMatch = text.match(RegEx.HTML_ALT);
 								const alt = altMatch?.[1];
 
-								images.push({ src: url, alt, from: current.from, to: endNode.to });
+								images.push({ src: url, alt, from: node.from, to: endNode.to });
 							}
 						}
 					}
@@ -191,6 +196,8 @@ const NodeName = {
 	FRONTMATTER_DEF: "def_hmd-frontmatter",
 	/** All nodes related to a code block seem to have this as part of their name. Thus use `include`: `node.name.includes(NodeName.CODEBLOCK_NODE_PART`. */
 	CODEBLOCK_NODE_PART: "HyperMD-codeblock",
+	FORMATTING: "formatting",
+	LINK_FORMATTING: "formatting_formatting-link-string",
 } as const;
 
 // This eliminates the regex compilation overhead on each call. Performance gain might be small, it's still a good practice.

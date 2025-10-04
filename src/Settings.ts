@@ -1,7 +1,7 @@
+import { CacheManager } from "cache/CacheManager";
+import { Env } from "Env";
 import { Platform, Plugin, PluginSettingTab, Setting } from "obsidian";
-import { CacheManager } from "./CacheManager";
-import { Env } from "./Env";
-import { Notice } from "./ui/Notice";
+import { Notice } from "ui/Notice";
 
 export interface PluginSettings {
 

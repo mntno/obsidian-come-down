@@ -1,9 +1,11 @@
+import { CacheMetadata, CacheMetadataImage, CacheRetainer, CacheRoot, CacheType, EMPTY_CACHE_ROOT } from "cache/CacheMetadata";
+import { Env } from "Env";
 import { imageSize } from "image-size";
 import { normalizePath, requestUrl, Vault } from "obsidian";
+import { Logger } from "utils/Logger";
+import { Url } from "utils/Url";
+import { Err } from "utils/ts";
 import xxhash, { XXHashAPI } from "xxhash-wasm";
-import { CacheMetadata, CacheMetadataImage, CacheRetainer, CacheRoot, CacheType, EMPTY_CACHE_ROOT } from "./CacheMetadata";
-import { Env } from "./Env";
-import { Url } from "./utils/Url";
 
 
 export interface CacheRequest {
@@ -15,6 +17,8 @@ export interface CacheRequest {
 
 	/** @todo Can do without. However, this makes each {@link CacheRequest} unique per requester. */
 	requesterPath: string;
+
+	isReadOnly: boolean;
 }
 
 export interface CacheItem {
@@ -118,7 +122,7 @@ export type MetadataChanged = (data: CacheRoot) => void;
 
 export class CacheManager {
 
-	private metadataRoot: CacheRoot;
+	private metadataRoot: CacheRoot = EMPTY_CACHE_ROOT;
 
 	private get cache(): Record<string, CacheMetadata> {
 		return this.metadataRoot.items;
@@ -215,15 +219,20 @@ export class CacheManager {
 		requestsToIgnore?: Set<CacheRequest>;
 		/** If `true` will remove any cache references on the associated {@link CacheRetainer|retainer}. */
 		preventReleases?: boolean;
+		/** Caller's logger */
+		logger?: Logger;
 	}) {
-		const { requestsToIgnore, preventReleases = false } = options || {};
+		const { requestsToIgnore, preventReleases = false, logger } = options || {};
 
-		Env.log.cm(Env.dev.icon.CACHE_MANAGER, Env.dev.thunkedStr(() => `updateRetainedCaches: \n\t${requests.length} retain requests:\n\t\t${requests.map(r => r.source).join("\n\t\t")} \n\tRetainer: ${retainerPath}`));
+		Env.log.cm(Env.dev.icon.CACHE_MANAGER, "updateRetainedCaches");
+		Env.log.cm(Env.dev.icon.CACHE_MANAGER, "\t", "Retainer: ", retainerPath);
 		Env.dev.runDev(() => {
 			requests.forEach(request => Env.assert(request.requesterPath === retainerPath, `Expected retainer of cache request (${request.source}) equal to ${retainerPath}`))
-			Env.log.cm(`\tTo ignore count: ${requestsToIgnore ? requestsToIgnore.size : 0}, preventCacheRelases: ${preventReleases}`);
-			Env.log.cm("\tCurrent retain count: ", this.retainCount());
+			Env.log.cm(Env.dev.icon.CACHE_MANAGER, "\t", `${requests.length} retain requests:`);
+			requests.forEach(request => Env.log.cm(Env.dev.icon.CACHE_MANAGER, "\t\t", request.source));
 		});
+		Env.log.cm(Env.dev.icon.CACHE_MANAGER, "\t", `To ignore count: ${requestsToIgnore ? requestsToIgnore.size : 0}, preventCacheRelases: ${preventReleases}`);
+		Env.log.cm(Env.dev.icon.CACHE_MANAGER, "\t", "Current retain count: ", this.retainCount());
 
 		// If retainer/file does not exist / is not yet registered, it will be.
 		let retainer = this.metadataRoot.retainers[retainerPath];
@@ -240,7 +249,7 @@ export class CacheManager {
 					cacheKeysRequestedReferenced.push(cacheKey);
 			}
 			else {
-				Env.log.cm("\tCache key does not (yet) exist:", cacheKey);
+				Env.log.cm(Env.dev.icon.CACHE_MANAGER, "\tCache key does not (yet) exist:", cacheKey);
 			}
 		}
 
@@ -260,24 +269,31 @@ export class CacheManager {
 			.filter(key => !ignoredReferences.includes(key));
 
 		if (addedReferences.length == 0 && removedReferences.length == 0) {
-			Env.log.cm(`\tNo change: all requested cache keys match the already referenced/retained keys. Aborting.`)
+			Env.log.cm(Env.dev.icon.CACHE_MANAGER, "\t", `No change: all requested cache keys match the already referenced/retained keys. Aborting.`)
 			return;
 		}
 
-		Env.log.cm("\tRequested cache keys:", cacheKeysRequestedReferenced);
-		Env.log.cm("\tRetaining:", addedReferences);
-		Env.log.cm("\tReleasing:", removedReferences);
-		Env.log.cm("\tIgnoring:", ignoredReferences);
+		// Input validation: Prevent removeal cache items that are not referenced by the retainer. This should not happen.
+		const invalidRemovedReferences = removedReferences.filter(key => !cacheKeysCurrentlyReferenced.includes(key));
+		const validRemovedReferences = removedReferences.filter(key => !invalidRemovedReferences.includes(key));
+		if (invalidRemovedReferences.length > 0)
+			Env.log.e(`Attempted to remove the following cache references from retainer '${retainerPath}' which does not reference them ${logger?.idString ?? Env.str.EMPTY}:`, invalidRemovedReferences);
+
+		Env.log.cm(Env.dev.icon.CACHE_MANAGER, "\t", "Requested cache keys:", cacheKeysRequestedReferenced);
+		Env.log.cm(Env.dev.icon.CACHE_MANAGER, "\t", "Retaining:", addedReferences);
+		Env.log.cm(Env.dev.icon.CACHE_MANAGER, "\t", "Releasing:", validRemovedReferences);
+		Env.log.cm(Env.dev.icon.CACHE_MANAGER, "\t", "Ignoring:", ignoredReferences);
+		Env.log.cm(Env.dev.icon.CACHE_MANAGER, "\t", "Not releasing (invalid):", invalidRemovedReferences);
 
 		let newRef = retainer !== undefined ? [...retainer.ref, ...addedReferences] : addedReferences;
-		newRef = newRef.filter(r => !removedReferences.includes(r));
+		newRef = newRef.filter(r => !validRemovedReferences.includes(r));
 		this.setRetainerRefs(retainerPath, newRef);
 
 		const updatedRetainCount = this.retainCount();
-		Env.log.cm("\tUpdated retain count: ", updatedRetainCount);
+		Env.log.cm(Env.dev.icon.CACHE_MANAGER, "\t", "Updated retain count: ", updatedRetainCount);
 
 		// Remove caches that are no longer referenced by any retainer.
-		for (const removedReference of removedReferences) {
+		for (const removedReference of validRemovedReferences) {
 			if (!this.isRetained(updatedRetainCount, removedReference))
 				await this.removeCacheItem(removedReference);
 		}
@@ -370,7 +386,7 @@ export class CacheManager {
 	}
 
 	/**
-		* If {@link cacheKey} is found in metadata, will removed the associated file from cache and from the metadata.
+		* If {@link cacheKey} is found in metadata, will remove the associated file from cache and from the metadata.
 		*
 		* {@link saveMetadataIfDirty} needs to be called at some point to persist the matadata.
 		*
@@ -380,7 +396,7 @@ export class CacheManager {
 		const metadata = this.cache[cacheKey];
 		Env.assert(metadata !== undefined, `Attempted to remove cash item using a non-existing key.`);
 		if (metadata !== undefined) {
-			Env.log.cm(Env.dev.icon.CACHE_MANAGER, `removeCacheItem\n\tRemoving ${this.nameOfCachedFileFromMetadata(metadata, cacheKey)}`);
+			Env.log.cm(Env.dev.icon.CACHE_MANAGER, "removeCacheItem", "\n\tRemoving", this.nameOfCachedFileFromMetadata(metadata, cacheKey));
 			await this.vault.adapter.remove(this.filePathToCachedFileFromMetadata(metadata, cacheKey));
 			delete this.cache[cacheKey];
 			this.isMetadataDirty = true;
@@ -547,6 +563,10 @@ export class CacheManager {
 		return new CacheResult(request, cacheKey, null, new CacheNotFoundError(cacheKey), undefined);
 	}
 
+	/**
+		* @remarks `vault.adapter.getResourcePath` adds (what looks like) a timestamp parameter to the end of the {@link CacheItem.resourcePath},
+		* e.g., "…/dbc4b9faa6ffacd2.png?1759472349631".
+		*/
 	private createCacheItem(metadata: CacheMetadata, fromCache: boolean): CacheItem {
 		return {
 			resourcePath: this.vault.adapter.getResourcePath(this.filePathToCachedFileFromMetadata(metadata)),
@@ -621,7 +641,7 @@ export class CacheManager {
 			result = await this.download(request, sourceFileInfo);
 		}
 		catch (error) {
-			result = new CacheResult(request, cacheKey ?? "", null, error);
+			result = new CacheResult(request, cacheKey ?? Env.str.EMPTY, null, Err.toError(error));
 		}
 		finally {
 			if (cacheKey)
@@ -649,7 +669,7 @@ export class CacheManager {
 
 			callback?.();
 		} catch (error) {
-			callback?.(error);
+			callback?.(Err.toError(error));
 		}
 	}
 
@@ -791,11 +811,17 @@ export class CacheManager {
 		return CacheManager.hasher.h64Raw(bytes).toString(16).padStart(16, '0');
 	}
 
-	public static createRequest(src: string, path: string): CacheRequest {
+	public static createRequest(src: string, path: string, isReadOnly: boolean = false): CacheRequest {
 		const source = src.trim();
+		Env.assert(source.length > 0);
 		const requesterPath = path.trim();
-		Env.assert(source.length > 0 && requesterPath.length > 0);
-		return { source, requesterPath } satisfies CacheRequest;
+		Env.assert(isReadOnly || requesterPath.length > 0);
+		return { source, requesterPath, isReadOnly: isReadOnly } satisfies CacheRequest;
+	}
+
+	/** @todo Also see {@link CacheRequest#requesterPath}. */
+	public static createReadOnlyRequest(src: string): CacheRequest {
+		return CacheManager.createRequest(src, Env.str.EMPTY, true);
 	}
 
 	public static isRequestEqual(request: CacheRequest, otherRequest: CacheRequest) {
@@ -938,7 +964,7 @@ export class CacheManager {
 			if (error instanceof CacheError)
 				result = new CacheResult(request, cacheKey, null, error);
 			else
-				result = new CacheResult(request, cacheKey, null, new CacheFetchError(cacheKey, error, { sourceUrl: sourceUrl }));
+				result = new CacheResult(request, cacheKey, null, new CacheFetchError(cacheKey, Err.toError(error), { sourceUrl: sourceUrl }));
 		}
 
 		return result;

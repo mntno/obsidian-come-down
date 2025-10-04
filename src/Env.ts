@@ -22,13 +22,14 @@ export const DevContext = {
 
 	logCategory: {
 		CACHE_MANAGER: true,
+		DEBUGGING: true,
 		EDIT_UPDATE_PASS: true,
 		POST_PROCESS_PASS: true,
 		WORKAROUNDS: false,
 	} as const,
 
 	icon: {
-		NONE: "  ",
+		DEBUG: "🐞",
 		CACHE_MANAGER: "📦",
 		EDIT_UPDATE_PASS: "✏️",
 		POST_PROCESS_PASS: "📖",
@@ -47,27 +48,13 @@ export const Env = {
 	log: {
 		noop: () => { },
 
-		/** To provide very granular, low-level, and highly detailed information. These logs are often too numerous to be helpful during general development but are invaluable when you're trying to diagnose a specific, complex bug. */
 		d: devLogger.debug,
-
-		/**
-			* - This is the most general-purpose logging method. It's a good default when a message doesn't neatly fit into the error, warn, or info categories, or when you're just doing quick, ad-hoc debugging.
-			* - When you use `console.log()`, you are typically saying: "Just output this general message." It's more of a catch-all, or often used for quick, ad-hoc debugging prints.
-			*/
 		l: devLogger.log,
-
-		/**
-			* - To provide high-level, general information about the application's flow or significant events. These are like "milestones" that give you an overview of what the application is doing.
-			* - This is an informational message about a significant event or the general flow of the application. It implies a higher level of importance or a more structured type of message than a generic `log`.
-			*/
 		i: devLogger.info,
-
-		/** To indicate a potential issue, a suboptimal practice, a deprecated feature being used, or a situation that might lead to an error later but isn't critical right now. It's a "heads up" or a "soft error." */
-		w: devLogger.warn,
-
-		/** Always logs */
+		w: console.warn,
 		e: console.error,
 
+		debug: DevContext.logCategory.DEBUGGING ? devLogger.info : noopLogger.info,
 		edit: DevContext.logCategory.EDIT_UPDATE_PASS ? devLogger.info : noopLogger.info,
 		read: DevContext.logCategory.POST_PROCESS_PASS ? devLogger.info : noopLogger.info,
 		cm: DevContext.logCategory.CACHE_MANAGER ? devLogger.info : noopLogger.info,
@@ -110,7 +97,13 @@ export const Env = {
 		EMPTY: "",
 		SPACE: " ",
 		is: (value: unknown): value is string => typeof value === "string",
-	} as const
+		nonEmpty: (value: unknown): string | undefined => typeof value === "string" && value !== "" ? value : undefined,
+	} as const,
+
+	bool: {
+		isTrue: (value: unknown): value is boolean => typeof value === "boolean" && value === true,
+	} as const,
+
 } as const;
 
 export type LoggerFn = (...args: unknown[]) => void;

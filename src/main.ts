@@ -1,14 +1,16 @@
-import { EditorView, ViewUpdate } from "@codemirror/view";
+import { EditorView, ViewPlugin, ViewUpdate } from "@codemirror/view";
+import { CacheFetchError, CacheItem, CacheManager, CacheRequest, CacheTypeError } from "cache/CacheManager";
+import { Env } from "Env";
 import { MarkdownPostProcessorContext, Plugin, TFile, normalizePath } from "obsidian";
-import { CacheFetchError, CacheItem, CacheManager, CacheRequest, CacheTypeError } from "./CacheManager";
-import { Env } from "./Env";
-import { HTMLElementAttribute, HTMLElementCacheState, HtmlAssistant } from "./HtmlAssistant";
-import { ProcessingPass } from "./ProcessingPass";
-import { PluginSettings, SettingTab, SettingsManager } from "./Settings";
-import { InfoModal } from "./ui/InfoModal";
-import { Notice } from "./ui/Notice";
-import { File } from "./utils/File";
-import { ObsAssistant } from "./utils/ObsAssistant";
+import { EditorViewPlugin, EditorViewPluginInfo } from "processing/EditorViewPlugin";
+import { HTMLElementAttribute, HTMLElementCacheState, HtmlAssistant } from "processing/HtmlAssistant";
+import { ProcessingContext } from "processing/ProcessingContext";
+import { ProcessingPass } from "processing/ProcessingPass";
+import { PluginSettings, SettingTab, SettingsManager } from "Settings";
+import { InfoModal } from "ui/InfoModal";
+import { Notice } from "ui/Notice";
+import { queueAsyncMicrotask, sleep } from "utils/dom";
+import { File } from "utils/File";
 
 
 interface PluginData {
@@ -20,9 +22,9 @@ const DEFAULT_DATA: PluginData = {
 } as const;
 
 export default class ComeDownPlugin extends Plugin {
-	private data: PluginData;
-	private settingsManager: SettingsManager;
-	private cacheManager: CacheManager;
+	private data!: PluginData;
+	private settingsManager!: SettingsManager;
+	private cacheManager!: CacheManager;
 
 	async onload() {
 		Env.log.d("Plugin:onload");
@@ -46,7 +48,12 @@ export default class ComeDownPlugin extends Plugin {
 		);
 		this.addSettingTab(new SettingTab(this, this.settingsManager, this.cacheManager));
 
-		this.registerEditorExtension(EditorView.updateListener.of((vu) => this.editorViewUpdateListener(vu)));
+		const viewPlugin = ViewPlugin.fromClass(EditorViewPlugin);
+		this.registerEditorExtension([
+			viewPlugin,
+			EditorView.updateListener.of((update) => update.view.plugin(viewPlugin)?.postUpdate(update, this.editorViewUpdateListener.bind(this)))
+		]);
+
 		this.registerMarkdownPostProcessor((e, c) => this.markdownPostProcessor(e, c));
 
 		this.registerEvent(
@@ -139,9 +146,9 @@ export default class ComeDownPlugin extends Plugin {
 		}
 		return this.cacheDirBacking;
 	}
-	private cacheDirBacking?: string;
-	private gitIgnorePath: string;
-	private cacheMetadataPath: string;
+	private cacheDirBacking?: string = undefined;
+	private gitIgnorePath: string = Env.str.EMPTY;
+	private cacheMetadataPath: string = Env.str.EMPTY;
 
 	/**
 		* Ensures the cache directory exists.
@@ -216,105 +223,171 @@ export default class ComeDownPlugin extends Plugin {
 		}
 	}
 
-	private editorViewUpdateListener(update: ViewUpdate) {
+	private editorViewUpdateListener(update: ViewUpdate, plugin: EditorViewPlugin, info: EditorViewPluginInfo) {
 		Env.log.d("Plugin:editorViewUpdateListener");
 
-		const pass = ProcessingPass.beginFromViewUpdate(this.app, update, { abortInSourceMode: true });
-		if (!pass)
+		const l = ProcessingPass.createViewUpdateLogger();
+		l.log(l.beginMsg("seq:", info.seqNum));
+
+		const ctx: ProcessingContext = ProcessingContext.fromViewUpdate(this.app, l, update);
+		ProcessingContext.logInit(ctx);
+
+		if (ProcessingPass.abortIfInvalidContext(ctx, plugin, info))
 			return;
 
-		// No need to cancel anything in source mode. In reader mode, just cancel then abort. Leave it to the markdown post processor.
-		const [imagesToCancel] = pass.findRelevantImagesToProcessViewUpdate(update);
-		HtmlAssistant.cancelImageLoading(imagesToCancel);
+		if (ProcessingPass.abortIfMode(ctx, "source")) // No need to cancel anything in source mode.
+			return;
 
-		if (pass.mode === "reader" || ComeDownPlugin.canAbortViewUpdate(imagesToCancel, update)) {
-			pass.log(pass.abortLogMsg());
+		// Find elements that needs to be cancelled, or if they already are cancelled, they need to be processed further, e.g. requesting cache.
+		const { elementsToProcess } = ProcessingPass.findRelevantImagesToProcessViewUpdate(ctx);
+		HtmlAssistant.cancelImageLoadIfNeeded(elementsToProcess);
+
+		if (ProcessingPass.abortIfMode(ctx, "reader")) // If reader mode, just cancel then abort. Post processor will handle it.
+			return;
+
+		// There are a few cases where a view update is called even though there are no actual updates. For example when switching a file in Obsidian.
+		ctx.assertViewUpdateContext();
+		if (!ctx.vuCtx.hasUpdates) {
+			l.log(l.abortMsg("no updates"));
 			return;
 		}
 
-		pass.enqueue(async () => {
-			// Read again to get the latest states (e.g. downloading).
-			const [imagesToProcess, remainingElements] = pass.findRelevantImagesToProcessViewUpdate(update);
-			pass.log(Env.dev.icon.EDIT_UPDATE_PASS, Env.dev.thunkedStr(() => `Found ${imagesToProcess.length} of ${imagesToProcess.length + remainingElements.length} images to process in current DOM. Running in serial queue. ${pass.idString}`));
+		// Abort if there is nothing to do.
+		if (elementsToProcess.length === 0 && !ComeDownPlugin.checkRemovals(update)) {
+			l.log(l.abortMsg(l.t(() => `0 elements; focusChanged: ${update.focusChanged}; docChanged: ${update.docChanged}`)));
+			return;
+		}
 
-			if (ComeDownPlugin.canAbortViewUpdate(imagesToProcess, update)) {
-				pass.log(pass.abortLogMsg());
+		// Wait for each pass to set states before next pass is allowed.
+		queueAsyncMicrotask(async () => {
+			l.log(l.msg("Running in serial queue. 🚶🏼🚶🏼🚶🏼"));
+
+			// Create a new context to reflect possible DOM changes.
+			const pass = new ProcessingPass(ProcessingContext.fromViewUpdate(this.app, l, update));
+
+			if (Env.isDev && !pass.ctx.domEquals(ctx))
+				ProcessingContext.logInit(pass.ctx);
+
+			if (ProcessingPass.abortIfMode(pass.ctx, "source", "reader"))
+				return;
+
+			// Read again to get the latest states (e.g. downloading).
+			const {
+				elementsToProcess,
+				remainingElements
+			} = ProcessingPass.findRelevantImagesToProcessViewUpdate(pass.ctx);
+
+			// Abort if there is nothing to do.
+			if (elementsToProcess.length === 0 && !ComeDownPlugin.checkRemovals(update)) {
+				l.log(l.abortMsg(l.t(() => `queue: 0 elements; focusChanged: ${update.focusChanged}; docChanged: ${update.docChanged}`)));
+				return;
+			}
+
+			l.log(l.msg(l.t(() => `Found ${elementsToProcess.length} of ${elementsToProcess.length + remainingElements.length} images to process in current DOM.`)));
+
+			pass.handleRequestingAndSucceeded(remainingElements);
+			pass.handleImagesNotInCurrentDOM([...elementsToProcess, ...remainingElements]);
+
+			// Special case when the user deletes an existing embed and all other image elements were filtered out: there are either no other embeds or all the other are already done.
+			// Even when there are no more images to display, the user might remove image embeds, which needs to be removed from the cache as well.
+			if (elementsToProcess.length === 0 && ComeDownPlugin.checkRemovals(update)) {
+				l.log(l.msg("Checking removals (no images to process but document changed)."));
+				pass.end(this.cacheManager);
 			}
 			else {
-
-				pass.handleRequestingAndSucceeded(remainingElements);
-				pass.handleImagesNotInCurrentDOM([...imagesToProcess, ...remainingElements]);
-
-				// Special case when the user deletes an existing embed and all other image elements were filtered out: there are either no other embeds or all the other are already done.
-				// Even when there are no more images to display, the user might remove image embeds, which needs to be removed from the cache as well.
-				if (imagesToProcess.length === 0 && update.docChanged) {
-					pass.log(pass.logMsg("Checking removals (no images to process but document changed)."));
-					pass.end(this.cacheManager);
-				}
-				else {
-					await this.requestCache(imagesToProcess, pass);
-				}
+				await this.requestCache(elementsToProcess, pass);
 			}
 		});
 	}
 
-	/** Refactored out of {@link editorViewUpdateListener} as a safty and self-documenting measure. See where `update.docChanged` in {@link editorViewUpdateListener}. */
-	private static canAbortViewUpdate = (elements: HTMLImageElement[], update: ViewUpdate) => elements.length === 0 && !update.docChanged;
+	/**
+		* This could always return `true`. It is just used to avoid unnecessary processing.
+		* - `focusChange`: if an image was removed externally, will be `true` when the note is opened, so that it its reference can be released.
+		* - `docChanged`: user removes an image.
+		*/
+	private static checkRemovals = (update: ViewUpdate) => update.focusChanged || update.docChanged;
 
 	/**
 		* @param element A chunk of HTML converted from markdown — not yet attached to the DOM.
-		* @param context
 		*/
-	private markdownPostProcessor(element: HTMLElement, context: MarkdownPostProcessorContext) {
+	private markdownPostProcessor(element: HTMLElement, procContext: MarkdownPostProcessorContext) {
 		Env.log.d("Plugin:markdownPostProcessor");
 
-		const [imagesToProcess, remainingElements] = ProcessingPass.findRelevantImagesToProcessInPostProcessor(element, context, true);
-		HtmlAssistant.cancelImageLoading(imagesToProcess);
+		const l = ProcessingPass.createPostProcessorLogger();
+		l.log(l.beginMsg());
 
-		const pass = ProcessingPass.beginFromPostProcessorContext(this.app, context);
-		if (pass === null)
+		const ctx = ProcessingContext.fromPostProcessor(this.app, l, element, procContext);
+		ProcessingContext.logInit(ctx);
+
+		if (ProcessingPass.abortIfMode(ctx, "source")) // No need to cancel anything in source mode.
 			return;
 
-		if (imagesToProcess.length === 0) {
-			pass.log(pass.abortLogMsg());
+		const { elementsToProcess } = ProcessingPass.findRelevantImagesToProcessInPostProcessor(element, true);
+		HtmlAssistant.cancelImageLoadIfNeeded(elementsToProcess);
+
+		if (ProcessingPass.abortIfMode(ctx, "preview")) // If preview mode, cancel then abort.
+			return;
+
+		if (elementsToProcess.length === 0) {
+			l.log(l.abortMsg("elementsToProcess:", elementsToProcess.length));
 			return;
 		}
 
-		pass.enqueue(async () => {
-			pass.log(pass.logMsg("Running in serial queue."));
+		// Wait for each pass to set states before next pass is allowed.
+		queueAsyncMicrotask(async () => {
+			l.log(l.msg("Running in serial queue. 🚶🏼🚶🏼🚶🏼"));
 
-			const readerContainerEl = ObsAssistant.readerContainerEl(pass.contentEl ?? pass.containerEl);
-			Env.assert(readerContainerEl);
-			if (readerContainerEl === null) {
-				pass.log(pass.abortLogMsg());
+			// By now, the HTML element chunk that was provided with this post processing callback
+			// should have been attached to the DOM if it is visible or just outside the viewport.
+
+			// Wait for subsequent elements to be attached inorder to group more elements in to the same pass.
+			// This is merely to reduce the number of download notices shown to the user.
+			// There's a cap to how many elements can be attached because the viewport size is limited. 5ms seems to be enough, so 10.
+			await sleep(10);
+
+			// Create a new context to reflect possible DOM changes after being queued and slept.
+			const pass: ProcessingPass = new ProcessingPass(ProcessingContext.fromPostProcessor(this.app, l, element, procContext));
+			pass.ctx.assertPostProcessor();
+
+			if (Env.isDev && !pass.ctx.domEquals(ctx))
+				ProcessingContext.logInit(pass.ctx);
+
+			if (ProcessingPass.abortIfMode(pass.ctx, "source", "preview"))
 				return;
-			}
 
-			// Wait a bit for all (or some more) elements to be attached to the DOM so that requests can be grouped. This is solely to reduce the number of download notices; it does not affect functionality.
-			await ProcessingPass.sleep(5);
+			const containerEl = pass.ctx.getPreferredContainerEl();
 
 			// Read again to get the latest states (e.g. downloading).
-			const [imagesToProcessInDom, remainingElementsInDom] = ProcessingPass.findRelevantImagesToProcessInPostProcessor(readerContainerEl, context, false);
+			const {
+				elementsToProcess: elementsToProcessInDom,
+				remainingElements
+			} = ProcessingPass.findRelevantImagesToProcessInPostProcessor(containerEl, false);
 
-			// The element/chunk that was provided in this post processing callback is not within the viewport (+margin), but it needs to be handled now anyway because this callback is only called once for each chunk.
+			// If the HTML element chunk, that was provided with this post processing callback,
+			// is not yet attached to the DOM (at this point executing in the queue),
+			// it needs to be included, as it could not have be found above.
+			//
+			// TODO: These could be collected and handled together similar to the ones already attached.
 			let imagesToProcessInCurrentElement: HTMLImageElement[] = [];
-			if (element.parentElement === null)
-				[imagesToProcessInCurrentElement] = ProcessingPass.findRelevantImagesToProcessInPostProcessor(element, context, false);
+			if (!pass.ctx.ppCtx.isElementAttached(containerEl))
+				imagesToProcessInCurrentElement = ProcessingPass.findRelevantImagesToProcessInPostProcessor(element, false).elementsToProcess;
 
-			pass.log(pass.logMsg(Env.dev.thunkedStr(() => `Found ${imagesToProcessInDom.length} of ${imagesToProcessInDom.length + remainingElementsInDom.length} images in DOM and ${imagesToProcessInCurrentElement.length} images in current HTML chunk to process.`)));
-			await this.requestCache([...imagesToProcessInDom, ...imagesToProcessInCurrentElement], pass);
+			l.log(l.t(() => l.msg(`Found ${elementsToProcessInDom.length} of ${elementsToProcessInDom.length + remainingElements.length} images in DOM and ${imagesToProcessInCurrentElement.length} images in current HTML chunk to process.`)));
+			await this.requestCache([...elementsToProcessInDom, ...imagesToProcessInCurrentElement], pass);
 		});
 	}
 
 	async requestCache(imageElements: HTMLImageElement[], pass: ProcessingPass) {
+		const l = pass.ctx.logr;
 
 		imageElements = imageElements.filter((imageElement) => HtmlAssistant.isElementCacheStateEqual(imageElement, HTMLElementCacheState.ORIGINAL_SRC_REMOVED, HTMLElementCacheState.CACHE_FAILED));
 
-		pass.log(Env.dev.thunkedStr(() => pass.logMsg(`requestCache\n\tGot ${imageElements.length} <img> elements to populate.`)));
+		l.log(l.t(() => l.msg("Plugin:requestCache", "\n\t", `Got ${imageElements.length} <img> elements to populate.`)));
 		if (imageElements.length == 0) {
-			pass.log(pass.abortLogMsg());
+			l.log(l.abortMsg("nothing to do"));
 			return;
 		}
+
 		await this.cacheManager.checkIfMetadataFileChangedExternally();
 
 		const requestGroups = groupRequests(imageElements, this.cacheManager, pass);
@@ -322,7 +395,7 @@ export default class ComeDownPlugin extends Plugin {
 		// First try to get src from local cache.
 		for (const requestGroup of requestGroups) {
 			const existingCacheResult = await this.cacheManager.existingCache(requestGroup.request, true);
-			pass.log(Env.dev.thunkedStr(() => pass.logMsg(`requestCache: ${existingCacheResult.item ? "Found" : "Did not find"} key ${existingCacheResult.cacheKey}. ${existingCacheResult.fileExists === undefined ? "Unknown if file exists." : `${existingCacheResult.fileExists ? "File exists." : "File does not exist."}`}`)));
+			l.log(l.t(() => l.msg(`Plugin:requestCache: ${existingCacheResult.item ? "Found" : "Did not find"} key ${existingCacheResult.cacheKey}. ${existingCacheResult.fileExists === undefined ? "Unknown if file exists." : `${existingCacheResult.fileExists ? "File exists." : "File does not exist."}`}`)));
 			if (existingCacheResult.item)
 				await handleRequestGroup(existingCacheResult.item, requestGroup);
 		};
@@ -331,12 +404,20 @@ export default class ComeDownPlugin extends Plugin {
 		let numberOfRemainingDownloads = remainingRequestGroups.length;
 
 		if (numberOfRemainingDownloads == 0) {
-			pass.log(pass.logMsg("requestCache: All images were in cache. Done."));
-			pass.end(this.cacheManager);
+			l.log(l.msg("Plugin:requestCache: All images were in cache. Done."));
+			pass.end(this.cacheManager); // Note: Must be called even though no cache additions were made to handle possible cache removals.
 			return;
 		}
 
-		// If we are here, some images need to be downloaded.
+		if (pass.ctx.isCacheAccessReadOnly) {
+			l.log(l.abortMsg("Plugin:requestCache: Pass is read only. ", l.t(() => `Got ${requestGroups.length - numberOfRemainingDownloads} image from cache. ${numberOfRemainingDownloads} remaining.`)));
+
+			remainingRequestGroups.forEach((requestGroup) =>
+				requestGroup.imageElements.forEach(el =>
+					HtmlAssistant.setFailed(el, true)));
+
+			return;
+		}
 
 		// Show download notice
 		if (this.settingsManager.settings.noticeOnDownload) {
@@ -368,7 +449,7 @@ export default class ComeDownPlugin extends Plugin {
 
 				if (result.item) {
 					const resultItem = result.item;
-					pass.log(Env.dev.thunkedStr(() => pass.logMsg(`requestCache:\n\tSettings src on ${imageElements.length} images\n\t${resultItem.metadata.f.n}\n\t${pass.isInPostProcessingPass ? `In HTML post processor` : `In edit listener`}`)));
+					l.log(Env.dev.thunkedStr(() => l.msg(`Plugin:requestCache:\n\tSettings src on ${imageElements.length} images\n\t${resultItem.metadata.f.n}\n\t${pass.ctx.ppCtx ? `In HTML post processor` : `In edit listener`}`)));
 					if (result.fileExists === true)
 						await handleRequestGroup(resultItem, requestGroup);
 					else
@@ -378,10 +459,10 @@ export default class ComeDownPlugin extends Plugin {
 					imageElements.forEach((imageElement) => HtmlAssistant.setInvalid(imageElement));
 
 					if (Env.isDev && (result.error instanceof CacheFetchError || result.error instanceof CacheTypeError))
-						pass.log(pass.logMsg(`requestCache: ${result.error.name}`), result.error);
+						l.log(l.msg(`Plugin:requestCache: ${result.error.name}`), result.error);
 
 					if (!(result.error instanceof CacheFetchError || result.error instanceof CacheTypeError))
-						Env.log.e("requestCache:\n\tFailed to fetch cache", result.error);
+						Env.log.e("Plugin:requestCache:\n\tFailed to fetch cache", result.error);
 				}
 
 				if (numberOfRemainingDownloads == 0) {
@@ -417,7 +498,7 @@ export default class ComeDownPlugin extends Plugin {
 			requestGroup.cacheFileFound = errorResult ? false : true;
 
 			if (requestGroup.cacheFileFound) {
-				pass.log(Env.dev.thunkedStr(() => pass.logMsg(`requestCache:handleRequestGroup: Found cached image: ${CacheManager.createCacheKeyFromMetadata(cacheItem.metadata)}, ID ${pass.passID} 📦📦📦`)));
+				l.log(l.t(() => l.msg(`requestCache:handleRequestGroup: Found cached image: ${CacheManager.createCacheKeyFromMetadata(cacheItem.metadata)} 📦📦📦`)));
 				pass.retainCache(requestGroup.request);
 			}
 		}
@@ -429,10 +510,10 @@ export default class ComeDownPlugin extends Plugin {
 			* - Retain info that could be overwritten while making the request to be able to restore it afterwards.
 			*
 			* @param imageElements
-			* @param processingPass
+			* @param pass
 			* @returns
 			*/
-		function groupRequests(imageElements: HTMLImageElement[], cacheManager: CacheManager, processingPass: ProcessingPass) {
+		function groupRequests(imageElements: HTMLImageElement[], cacheManager: CacheManager, pass: ProcessingPass) {
 
 			const groupedByRequest: Record<string, RequestGroup> = {};
 
@@ -451,7 +532,7 @@ export default class ComeDownPlugin extends Plugin {
 						group.altAttributeValues.push(alt);
 					}
 					else {
-						const request = CacheManager.createRequest(src, processingPass.associatedFile.path);
+						const request = pass.ctx.isCacheAccessReadWrite() ? CacheManager.createRequest(src, pass.ctx.associatedFile.path) : CacheManager.createReadOnlyRequest(src);
 						const validationError = cacheManager.validateRequest(request);
 						if (validationError) {
 							Env.log.e(`Cache request failed validation.`, validationError)

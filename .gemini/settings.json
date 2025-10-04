@@ -1,10 +1,20 @@
 {
-	"autoAccept": false,
-	"contextFileName": ["GEMINI.md"],
-	"fileFiltering": {
-	  "respectGitIgnore": true,
-	  "enableRecursiveFileSearch": true
-	},
-	"hideBanner": true,
-	"usageStatisticsEnabled": false
+  "tools": {
+    "autoAccept": false
+  },
+  "context": {
+    "fileName": [
+      "AGENTS.md"
+    ],
+    "fileFiltering": {
+      "respectGitIgnore": true,
+      "enableRecursiveFileSearch": true
+    }
+  },
+  "ui": {
+    "hideBanner": true
+  },
+  "privacy": {
+    "usageStatisticsEnabled": false
+  }
 }

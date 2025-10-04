@@ -1,8 +1,8 @@
+import { CacheManager } from "cache/CacheManager";
+import { Env } from "Env";
 import { App, ButtonComponent, Modal, Setting } from "obsidian";
-import { CacheManager } from "../CacheManager";
-import { PluginSettings } from "../Settings";
-import { Notice } from "./Notice";
-import { Env } from "../Env";
+import { PluginSettings } from "Settings";
+import { Notice } from "ui/Notice";
 
 export class InfoModal extends Modal {
 	private cacheManager: CacheManager;
@@ -67,8 +67,8 @@ export class InfoModal extends Modal {
 
 	debugInfoSetting?: Setting;
 	clearCacheSetting: Setting;
-	clearCacheButton: ButtonComponent;
-	closeButton: ButtonComponent;
+	clearCacheButton!: ButtonComponent;
+	closeButton!: ButtonComponent;
 
 	onOpen(): void {
 		super.onOpen();

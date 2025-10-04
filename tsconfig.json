@@ -10,6 +10,7 @@
     "moduleResolution": "node",
     "importHelpers": true,
     "isolatedModules": true,
+    "strict": true,
     "strictNullChecks": true,
     "noUncheckedIndexedAccess": true,
     "lib": ["DOM", "ES2022"]

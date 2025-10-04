@@ -1,6 +1,7 @@
-import { getIcon } from "obsidian";
-import { Env } from "./Env";
-import { Url } from "./utils/Url";
+import { Env } from "Env";
+import { ObsAssistant } from "utils/ObsAssistant";
+import { Err } from "utils/ts";
+import { Url } from "utils/Url";
 
 export const enum HTMLElementCacheState {
 	/** Untouched by the plugin. */
@@ -146,9 +147,9 @@ export class HtmlAssistant {
 		HtmlAssistant.setIcon(imageElement, HtmlAssistant.loadingIcon);
 	}
 
-	public static setFailed(element: HTMLImageElement) {
+	public static setFailed(element: HTMLImageElement, readOnlyAccess = false) {
 		HtmlAssistant.setCacheState(element, HTMLElementCacheState.CACHE_FAILED);
-		HtmlAssistant.setIcon(element, HtmlAssistant.failedIcon);
+		HtmlAssistant.setIcon(element, readOnlyAccess ? HtmlAssistant.readOnlyIcon : HtmlAssistant.failedIcon);
 	}
 
 	public static setInvalid(element: HTMLImageElement) {
@@ -158,7 +159,7 @@ export class HtmlAssistant {
 
 	private static setCanceled(element: HTMLImageElement) {
 		HtmlAssistant.setCacheState(element, HTMLElementCacheState.ORIGINAL_SRC_REMOVED);
-		HtmlAssistant.setIcon(element, HtmlAssistant.emptyIcon);
+		HtmlAssistant.setIcon(element, HtmlAssistant.placeholderIcon);
 	}
 
 	/**
@@ -170,8 +171,8 @@ export class HtmlAssistant {
 		*
 		* @param imageElements
 		*/
-	public static cancelImageLoading(imageElements: HTMLImageElement[]) {
-		Env.log.d("HtmlAssistant:cancelImageLoading: Number of images:", imageElements.length);
+	public static cancelImageLoadIfNeeded(imageElements: HTMLImageElement[]) {
+		Env.log.d("HtmlAssistant:cancelImageLoading: Number of images to check:", imageElements.length);
 		if (imageElements.length === 0)
 			return;
 
@@ -284,7 +285,7 @@ export class HtmlAssistant {
 			if (error instanceof TypeError)
 				return new HtmlAssistantFileNotFoundError(src);
 			else
-				return error;
+				return Err.toError(error);
 		}
 
 		if (response.ok) {
@@ -296,7 +297,7 @@ export class HtmlAssistant {
 				else
 					return new Error(`Invalid blob URL: ${url}`);
 			} catch (error) {
-				return error;
+				return Err.toError(error);
 			}
 		}
 		else {
@@ -319,10 +320,7 @@ export class HtmlAssistant {
 		*/
 	private static get loadingIcon(): Blob {
 		if (this.loadingIconBacking === undefined) {
-			const icon = getIcon("loader")
-			console.assert(icon, "loader icon id not found");
-			icon!.setAttribute("stroke", "#919191");
-			icon!.setAttribute("stroke-width", "1");
+			const icon = ObsAssistant.getIcon("image-down", { fallbackIconID: "bug" }); // "loader"
 			this.loadingIconBacking = new Blob([icon!.outerHTML], { type: "image/svg+xml" });
 		}
 		return this.loadingIconBacking;
@@ -331,22 +329,28 @@ export class HtmlAssistant {
 
 	private static get failedIcon(): Blob {
 		if (this.failedIconBacking === undefined) {
-			const icon = getIcon("image")
-			console.assert(icon, "image icon id not found");
-			icon!.setAttribute("stroke", "#ff0000");
-			icon!.setAttribute("stroke-width", "1");
+			const icon = ObsAssistant.getIcon("image", { color: "#ff0000",  fallbackIconID: "bug" }); // image-off
 			this.failedIconBacking = new Blob([icon!.outerHTML], { type: "image/svg+xml" });
 		}
 		return this.failedIconBacking;
 	}
 	private static failedIconBacking?: Blob;
 
-	private static get emptyIcon(): Blob {
-		if (this.emptyIconBacking === undefined)
-			this.emptyIconBacking = new Blob(['<svg width="0" height="0" xmlns="http://www.w3.org/2000/svg"></svg>'], { type: "image/svg+xml" });
-		return this.emptyIconBacking;
+	private static get readOnlyIcon(): Blob {
+		if (this.readOnlyIconBacking === undefined) {
+			const icon = ObsAssistant.getIcon("meh"); // frown ellipsis square-check activity
+			this.readOnlyIconBacking = new Blob([icon!.outerHTML], { type: "image/svg+xml" });
+		}
+		return this.readOnlyIconBacking;
 	}
-	private static emptyIconBacking?: Blob;
+	private static readOnlyIconBacking?: Blob;
+
+	private static get placeholderIcon(): Blob {
+		if (this.placeholderIconBacking === undefined)
+			this.placeholderIconBacking = new Blob(['<svg width="0" height="0" xmlns="http://www.w3.org/2000/svg"></svg>'], { type: "image/svg+xml" });
+		return this.placeholderIconBacking;
+	}
+	private static placeholderIconBacking?: Blob;
 }
 
 class HtmlAssistantFileNotFoundError extends Error {
