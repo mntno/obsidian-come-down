@@ -54,11 +54,13 @@ export const Env = {
 		w: console.warn,
 		e: console.error,
 
+		/* eslint-disable @typescript-eslint/no-unnecessary-condition */
 		debug: DevContext.logCategory.DEBUGGING ? devLogger.info : noopLogger.info,
 		edit: DevContext.logCategory.EDIT_UPDATE_PASS ? devLogger.info : noopLogger.info,
 		read: DevContext.logCategory.POST_PROCESS_PASS ? devLogger.info : noopLogger.info,
 		cm: DevContext.logCategory.CACHE_MANAGER ? devLogger.info : noopLogger.info,
 		workaround: DevContext.logCategory.WORKAROUNDS ? devLogger.info : noopLogger.info,
+		/* eslint-enable @typescript-eslint/no-unnecessary-condition */
 	},
 
 	perf: {
@@ -69,18 +71,22 @@ export const Env = {
 		},
 	},
 
+	/**
+		* @param appOrCallback - Either a callback function to execute after the cache is cleared, or an App instance to reload Obsidian.
+		*/
 	clearBrowserCache: (appOrCallback: (() => void) | App) => {
 		if (isDev && Platform.isDesktopApp) {
+			// eslint-disable-next-line @typescript-eslint/no-require-imports
 			require('electron').remote.session.defaultSession.clearCache()
 				.then(() => {
 					if (appOrCallback instanceof App) {
 						// @ts-expect-error
-						app.commands.executeCommandById("app:reload");
+						appOrCallback.commands.executeCommandById("app:reload");
 					}
 					else
 						appOrCallback();
 				})
-				.catch((error: any) => console.error('Error clearing cache:', error));
+				.catch((error: unknown) => console.error('Error clearing cache:', error));
 		}
 	},
 
@@ -92,6 +98,10 @@ export const Env = {
 			return true;
 		return false;
 	},
+
+	obj: {
+		is: (value: unknown): value is object => typeof value === "object" && value !== null, // `null` is an object
+	} as const,
 
 	str: {
 		EMPTY: "",

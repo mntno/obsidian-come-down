@@ -13,13 +13,14 @@ data.json
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store
 
-# Hot Reload plugin
-.hotreload
-
 # This plugin
 
-## The compiled main.js file.
-main.js
+## Files are copied here on `pnpm run build`.
+/dist/
 
-## Created by plugin.
+## Sym-linked to the plugin's folder in the dev/test vault. Files are copied here `pnpm run dev`.
+## Git stores symlinks as a special file containing the target path string, not as a directory. So the gitignore rule needs to match a file, not a directory pattern.
+dev-vault
+
+main.js
 cache.json

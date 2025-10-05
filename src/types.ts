@@ -1,6 +1,7 @@
-// Global (see tsconfig `include`)
-// Do not add `export`
+// types.ts - Global type declarations
 
-type Prettify<T> = {
+// Global type aliases
+
+export type Prettify<T> = {
 	[K in keyof T]: T[K];
 } & {};

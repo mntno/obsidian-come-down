@@ -27,7 +27,7 @@ Having the cache located inside the plugin’s folder serves several purposes:
 - It allows the cache to be automatically deleted if the plugin is uninstalled.
 - A .gitignore file can be placed in the cache folder to exclude it from Git. Had it been in a visible folder, users might mistakenly think that files they add there would be committed.
 
-### Embedded Images Are Already Cached
+### Embedded Images are Already Cached
 
 Obsidian is built on Electron, which embeds the Chromium web browser. Therefore, it has built-in caching just as any web browser. But this cache exists outside your vault.
 
@@ -35,19 +35,12 @@ For example, if you copied your vault's root folder to a USB memory and opened i
 
 ### Disabling
 
-If the plugin is disabled, everything will work as it did before the plugin was enabled — the embedded images will load by means of the underlying browser. Upon enabling it again, the plugin's already cached items will be used, bypassing the browser. 
+If the plugin is disabled, everything will work as it did before the plugin was enabled — the embedded images will load by means of the underlying browser. Upon enabling it again, the plugin's already cached items will be used, bypassing the browser.
 
-Note that if an embedded image is removed from a note while the plugin is disabled, its potential cached file will not be removed until that specific note is opened again with the plugin enabled. If you want to disable the plugin you may delete the cache first from settings.
+Note that if an embedded image is removed from a note while the plugin is disabled, its potential cached file will not be removed until that specific note is opened again with the plugin enabled. If you want to disable the plugin, you may want to delete the cache from the settings first.
+
+### Syncing
+
+It is best to avoid caching on several devices without synchronizing in between, as this can lead to synchronization conflicts and inconsistencies. For example, you may see the same image download again on another device.
 
 [^1]: This excludes [Obsidian Sync](https://obsidian.md/sync).
-
-
-
-
-
-
-
-
-
-
-

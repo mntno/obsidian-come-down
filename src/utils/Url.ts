@@ -63,7 +63,7 @@ export class Url {
 		try {
 			const url = new URL(src);
 			return url.protocol === "http:" || url.protocol === "https:";
-		} catch (error) {
+		} catch {
 			return false;
 		}
 	}

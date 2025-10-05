@@ -1,21 +1,47 @@
 {
-  "compilerOptions": {
-    "baseUrl": "src",
-    "inlineSourceMap": true,
-    "inlineSources": true,
-    "module": "ESNext",
-    "target": "ES2022",
-    "allowJs": true,
-    "noImplicitAny": true,
-    "moduleResolution": "node",
-    "importHelpers": true,
-    "isolatedModules": true,
-    "strict": true,
-    "strictNullChecks": true,
-    "noUncheckedIndexedAccess": true,
-    "lib": ["DOM", "ES2022"]
-  },
-  "include": [
-    "**/*.ts"
-  ]
+	"compilerOptions": {
+		// Enable to check TS7 compatibility.
+		"stableTypeOrdering": false,
+
+		"rootDir": "./src",
+		"paths": {
+			"*": ["./src/*"],
+			"#/*": ["./src/*"]
+		},
+
+		"inlineSourceMap": true,
+		"inlineSources": true,
+
+		"target": "ES2024",
+		"lib": [
+			"DOM",
+			"ES2024"
+		],
+		"types": ["node"],
+
+		"moduleResolution": "bundler",
+		"isolatedModules": true,
+
+		"importHelpers": true,
+
+		"noUncheckedIndexedAccess": true,
+		"noImplicitOverride": true,
+		"noPropertyAccessFromIndexSignature": false,
+		"erasableSyntaxOnly": false,
+		"exactOptionalPropertyTypes": false,
+
+		// For ESLint to handle:
+		"allowUnreachableCode": true,
+		"allowUnusedLabels": true,
+	},
+	"include": [
+		"./src/**/*.ts"
+	],
+	"exclude": [
+		"./node_modules",
+		"./dist",
+		"./build",
+		"./main.js",
+		"./eslint.config.js"
+	]
 }

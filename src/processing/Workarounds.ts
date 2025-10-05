@@ -1,6 +1,6 @@
 import { ViewUpdate } from "@codemirror/view";
 import { Env } from "Env";
-import { HtmlAssistant, HTMLElementAttribute, HTMLElementCacheState } from "processing/HtmlAssistant";
+import { HtmlAssistant, HTMLElementCacheState } from "processing/HtmlAssistant";
 import { Url } from "utils/Url";
 
 export class Workarounds {
@@ -29,7 +29,7 @@ export class Workarounds {
 		if (update.changes.empty)
 			return null;
 
-		var sourcesToIgnore: string[] = [];
+		const sourcesToIgnore: string[] = [];
 
 		update.changes.iterChanges((_fromA, _toA, cursorStartPos, cursorEndPosition, inserted) => {
 
@@ -83,7 +83,7 @@ export class Workarounds {
 		* Will not match if there's no link because an img element is not inserted until the link
 		* begins with `http:`, `https:`, `ftp:`, `ws:`, or `wss:`.
 		*/
-	private static readonly markdownLinkRegex = /(?<!\!)\[.*?\]\((.+?)\)/;
+	private static readonly markdownLinkRegex = /(?<!!)\[.*?\]\((.+?)\)/;
 
 	/**
 		* Since image elements are not available in {@link detectSourcesOfInvalidImageElements}, this method is used with the result of that when the elements are available.

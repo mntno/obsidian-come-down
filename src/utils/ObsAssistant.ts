@@ -1,7 +1,7 @@
 import { Env } from "Env";
 import { App, FileView, getIcon, ItemView, MarkdownPostProcessorContext, MarkdownView, TextFileView, TFile, View } from "obsidian";
+import { Prettify } from "types";
 import { childEl, firstChildEl, firstParentEl } from "utils/dom";
-import { Arr } from "utils/ts";
 
 export type ObsViewMode = "none" | "reader" | "preview" | "source";
 
@@ -21,7 +21,7 @@ export class ObsAssistant {
 	/** Internal API */
 	public static containerElFromPostProcessorContext(postProcessorContext: MarkdownPostProcessorContext) {
 		Env.assert("containerEl" in postProcessorContext, "MarkdownPostProcessorContext does not have `containerEl`");
-		// @ts-ignore
+		// @ts-expect-error
 		const containerEl = postProcessorContext.containerEl;
 		if (containerEl)
 			return containerEl as HTMLElement;
@@ -56,13 +56,13 @@ export class ObsAssistant {
 		* ```html
 		* <div class="popover hover-popover">`
 		* 	<div class="markdown-embed is-loaded">
-    * 		<div class="markdown-embed-content …">
-    *				<div class="markdown-preview-view markdown-rendered …">
-    *				</div>
-    *				…
-    *			</div>
-    *		</div>
-    *	</div>
+		* 		<div class="markdown-embed-content …">
+		*				<div class="markdown-preview-view markdown-rendered …">
+		*				</div>
+		*				…
+		*			</div>
+		*		</div>
+		*	</div>
 		* ```
 		*
 		* @remarks `hover-popover` is a modifier class that extends or specifies the behavior. It indicates the popover appears on hover.
@@ -89,31 +89,37 @@ export class ObsAssistant {
 		let element: HTMLElement[] | null = null;
 
 		const findChildOrChildren = (options as TryGetAllOptions).allDescendants === true ? childEl : firstChildEl;
-
 		const find = (el: HTMLElement) => {
-			if (options.dir === "down") {
-				element = Arr.orNull(findChildOrChildren(el, selectors));
-			}
-			else if (options.dir === "up") {
-				element = Arr.orNull(firstParentEl(el, selectors));
-			}
-			else if (options.dir === "downup") {
-				element = Arr.orNull(findChildOrChildren(el, selectors));
-				if (element === null)
-					element = Arr.orNull(firstParentEl(el, selectors));
-			}
-			else if (options.dir === "updown") {
-				element = Arr.orNull(firstParentEl(el, selectors));
-				if (element === null)
-					element = Arr.orNull(findChildOrChildren(el, selectors));
-			}
+
+			const orNull = (v: HTMLElement[] | HTMLElement | null): HTMLElement[] | null => v === null
+				? null
+				: (Array.isArray(v) ? v : [v]);
+
+			switch (options.dir) {
+				case "down":
+					return orNull(findChildOrChildren(el, selectors));
+				case "up":
+					return orNull(firstParentEl(el, selectors));
+				case "downup": {
+					let element = orNull(findChildOrChildren(el, selectors));
+					if (element === null)
+						element = orNull(firstParentEl(el, selectors));
+					return element;
+				}
+				case "updown": {
+					let element = orNull(firstParentEl(el, selectors));
+					if (element === null)
+						element = orNull(findChildOrChildren(el, selectors));
+					return element;
+				}
+			};
 		};
 
 		if (options.view !== undefined) {
 			if (options.view instanceof ItemView)
-				find(options.view.contentEl);
+				element = find(options.view.contentEl);
 			else
-				find(options.view.containerEl);
+				element = find(options.view.containerEl);
 		}
 
 		if (element === null && options.postProcessorContext) {
@@ -229,7 +235,7 @@ export class ObsAssistant {
 			return null;
 
 		const iconColor = color ?? getComputedStyle(el).getPropertyValue(CssVar.Icon.COLOR).trim();
-		Env.assert(iconColor, "CSS variable not found:", CssVar.Icon.COLOR);
+		Env.assert(Env.str.nonEmpty(iconColor) !== undefined, "CSS variable not found:", CssVar.Icon.COLOR);
 		icon.setAttribute("stroke", iconColor || fallbackColor);
 		icon.setAttribute("stroke-width", "1");
 

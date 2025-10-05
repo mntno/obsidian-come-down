@@ -53,7 +53,7 @@ export class ProcessingPass {
 
 	public retainCache(urlOrCache: string | CacheRequest) {
 		if (this.ctx.isCacheAccessReadWrite()) {
-			Env.assert(urlOrCache);
+			Env.assert(Env.str.nonEmpty(urlOrCache) !== undefined || Env.obj.is(urlOrCache));
 			this.ctx.logr.log(this.ctx.logr.t(() => this.ctx.logr.msg(`retainCache: Will retain ${CacheManager.createCacheKeyFromOriginalSrc(Env.str.is(urlOrCache) ? urlOrCache : urlOrCache.source)} at the end of pass`)));
 
 			if (Env.str.is(urlOrCache)) {
@@ -69,7 +69,7 @@ export class ProcessingPass {
 
 	public ignoreCache(src: string) {
 		if (this.ctx.isCacheAccessReadWrite()) {
-			Env.assert(src);
+			Env.assert(Env.str.nonEmpty(src) !== undefined);
 			this.ctx.logr.log(this.ctx.logr.t(() => this.ctx.logr.msg(`ignoreCache: Will ignore ${CacheManager.createCacheKeyFromOriginalSrc(src)} at the end of pass`)));
 
 			this.requestsToIgnore.add(CacheManager.createRequest(src, this.ctx.associatedFile.path));

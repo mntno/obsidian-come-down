@@ -28,7 +28,7 @@ export class EditorViewPlugin {
 		Env.log.d("EditorViewPlugin:constructor");
 	}
 
-	update(update: ViewUpdate) {
+	update(_update: ViewUpdate) {
 		//Env.log.d("EditorViewPlugin:update", this.getViewMetadata(update.view));
 	}
 

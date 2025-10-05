@@ -26,7 +26,7 @@ export default class ComeDownPlugin extends Plugin {
 	private settingsManager!: SettingsManager;
 	private cacheManager!: CacheManager;
 
-	async onload() {
+	override async onload() {
 		Env.log.d("Plugin:onload");
 
 		Notice.setName(this.manifest.name);
@@ -104,20 +104,19 @@ export default class ComeDownPlugin extends Plugin {
 		});
 	}
 
-	async onunload() {
+	override async onunload() {
 		Env.log.d("Plugin:onunload");
-		await this.cacheManager?.cancelAllOngoing();
+		await this.cacheManager.cancelAllOngoing();
 	}
 
-	public onExternalSettingsChange() {
+	override onExternalSettingsChange() {
 		Env.log.d("Plugin:onExternalSettingsChange");
-		if (this.data) {
-			ComeDownPlugin.loadPluginData(this).then(data => {
-				this.data = data;
-				this.settingsManager.onSettingsChangedExternally(this.data.settings);
-				setTimeout(() => this.cacheManager.checkIfMetadataFileChangedExternally(), 1000);
-			})
-		}
+
+		ComeDownPlugin.loadPluginData(this).then(data => {
+			this.data = data;
+			this.settingsManager.onSettingsChangedExternally(this.data.settings);
+			setTimeout(() => this.cacheManager.checkIfMetadataFileChangedExternally(), 1000);
+		})
 	}
 
 	private static async loadPluginData(plugin: Plugin): Promise<PluginData> {

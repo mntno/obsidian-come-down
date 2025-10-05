@@ -43,7 +43,7 @@ export class ProcessingContext {
 
 		this.vuCtx = underlyingCtx instanceof ViewUpdateContext ? underlyingCtx : null;
 		this.ppCtx = underlyingCtx instanceof PostProcessorContext ? underlyingCtx : null;
-		Env.dev.assert(this.vuCtx || this.ppCtx);
+		Env.dev.assert(this.vuCtx !== null || this.ppCtx !== null);
 
 		this.viewContainerEl = viewContainerEl;
 
@@ -67,7 +67,7 @@ export class ProcessingContext {
 		const contentEl = viewUpdate.view.contentDOM;
 		let viewContainerEl: HTMLElement | null = null;
 
-		let view = ProcessingContext.tryGetViewInstance(app, contentEl);
+		const view = ProcessingContext.tryGetViewInstance(app, contentEl);
 		if (view)
 			viewContainerEl = view.containerEl;
 
@@ -75,7 +75,7 @@ export class ProcessingContext {
 		if (viewContainerEl === null)
 			viewContainerEl = Arr.firstOrNull(ObsAssistant.viewContainerEl({ element: contentEl, dir: "up" }));
 
-		let viewingMode = ProcessingContext.tryGetViewingMode(view ?? undefined, viewContainerEl ?? undefined);
+		const viewingMode = ProcessingContext.tryGetViewingMode(view ?? undefined, viewContainerEl ?? undefined);
 
 		let associatedFile: TFile | null = null;
 		if (view !== null)
@@ -101,7 +101,7 @@ export class ProcessingContext {
 
 		let viewContainerEl: HTMLElement | null = null;
 
-		let view = ProcessingContext.tryGetViewInstance(app, element);
+		const view = ProcessingContext.tryGetViewInstance(app, element);
 		if (view)
 			viewContainerEl = view.containerEl;
 

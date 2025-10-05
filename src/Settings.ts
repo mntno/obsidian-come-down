@@ -1,6 +1,6 @@
 import { CacheManager } from "cache/CacheManager";
 import { Env } from "Env";
-import { Platform, Plugin, PluginSettingTab, Setting } from "obsidian";
+import { Plugin, PluginSettingTab, Setting } from "obsidian";
 import { Notice } from "ui/Notice";
 
 export interface PluginSettings {
@@ -29,7 +29,7 @@ type SettingsChanged = (settings: PluginSettings) => void;
 export class SettingsManager {
 	public settings: PluginSettings;
 	public save: () => Promise<void>;
-	public onChangedCallback: (name: string, value: any) => void | undefined;
+	public onChangedCallback: (name: string, value: unknown) => void | undefined;
 
 	static readonly DEFAULT_SETTINGS: PluginSettings = {
 		noticeOnDownload: true,
@@ -43,7 +43,7 @@ export class SettingsManager {
 		gitIgnoreCacheDir: "gitIgnoreCacheDir",
 	} as const;
 
-	constructor(settings: any, save: (settings: PluginSettings) => Promise<void>, onChangedCallback: (name: string, value: any) => void | undefined) {
+	constructor(settings: PluginSettings, save: (settings: PluginSettings) => Promise<void>, onChangedCallback: (name: string, value: unknown) => void | undefined) {
 		this.settings = settings;
 		this.save = () => save(this.settings);
 		this.onChangedCallback = onChangedCallback;
@@ -87,7 +87,7 @@ export class SettingTab extends PluginSettingTab {
 		this.cacheManager.checkIfMetadataFileChangedExternally().then(() => this.render());
 	}
 
-	public hide(): void {
+	override hide(): void {
 		Env.log.d("SettingTab:hide");
 		if (this.isShown)
 			this.settingsManager.unregisterOnChangedCallback(this.onChangedCallback);
@@ -102,7 +102,7 @@ export class SettingTab extends PluginSettingTab {
 
 		containerEl.empty();
 
-		let compactDownloadMessage: Setting | undefined;
+		let compactDownloadMessage: Setting | undefined = undefined;
 		const setCompactDownloadMessageVisibility = () => {
 			if (settings.noticeOnDownload)
 				compactDownloadMessage?.settingEl.show();
@@ -161,11 +161,7 @@ export class SettingTab extends PluginSettingTab {
 
 								button.buttonEl.remove();
 
-								if (Env.isDev && Platform.isDesktopApp) {
-									require('electron').remote.session.defaultSession.clearCache()
-										.then(() => new Notice('Electron Cache cleared successfully. Restart vault.'))
-										.catch((error: any) => Env.log.e('Error clearing cache:', error));
-								}
+								Env.clearBrowserCache(() => new Notice('Electron Cache cleared successfully. Restart vault.'));
 							}
 						});
 					});
@@ -198,7 +194,7 @@ export class SettingTab extends PluginSettingTab {
 					settings.gitIgnoreCacheDir = value;
 					await this.settingsManager.save();
 					refreshDisabled();
-					this.settingsManager?.onChangedCallback(SettingsManager.SETTING_NAME.gitIgnoreCacheDir, value);
+					this.settingsManager.onChangedCallback(SettingsManager.SETTING_NAME.gitIgnoreCacheDir, value);
 				});
 			});
 	}

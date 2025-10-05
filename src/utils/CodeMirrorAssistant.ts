@@ -1,6 +1,6 @@
 import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 import { EditorView, ViewUpdate } from "@codemirror/view";
-import { SyntaxNodeRef, Tree } from "@lezer/common";
+import { Tree } from "@lezer/common";
 import { Env } from "Env";
 
 export interface ParsedImage {

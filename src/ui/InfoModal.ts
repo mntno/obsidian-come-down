@@ -70,7 +70,7 @@ export class InfoModal extends Modal {
 	clearCacheButton!: ButtonComponent;
 	closeButton!: ButtonComponent;
 
-	onOpen(): void {
+	override onOpen(): void {
 		super.onOpen();
 		this.cacheManager.registerMetadataChanged(this.onMetadataChangedCallback);
 		setTimeout(() => {
@@ -81,7 +81,7 @@ export class InfoModal extends Modal {
 		this.populate();
 	}
 
-	onClose(): void {
+	override onClose(): void {
 		super.onClose();
 		this.cacheManager.unregisterMetadataChanged(this.onMetadataChangedCallback);
 	}

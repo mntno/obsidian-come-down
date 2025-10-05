@@ -84,7 +84,7 @@ export class CacheFetchError extends CacheError {
 
 	constructor(cacheKey: string, readonly error: Error | null, readonly info: { readonly sourceUrl: string, readonly statusCode?: number }) {
 
-		super(cacheKey, `Failed to fetch cache: ${cacheKey}. Status: ${info?.statusCode ?? "Unknown"}`, { cause: error });
+		super(cacheKey, `Failed to fetch cache: ${cacheKey}. Status: ${info.statusCode ?? "Unknown"}`, { cause: error });
 
 		if (error) {
 			if (error.message && error.message.includes("net::ERR_NAME_NOT_RESOLVED")) {
@@ -100,7 +100,7 @@ export class CacheFetchError extends CacheError {
 			}
 		}
 		else {
-			this.isRetryable = !this.info?.statusCode || (this.info?.statusCode >= 500 && this.info?.statusCode < 600);
+			this.isRetryable = !this.info.statusCode || (this.info.statusCode >= 500 && this.info.statusCode < 600);
 		}
 	}
 }
@@ -136,6 +136,7 @@ export class CacheManager {
 	private readonly metadataFilePath: string;
 
 	private static hasher: XXHashAPI;
+	private static isHasherInitialized = false;
 
 	private readonly filePathsToOmitWhenClearingCache: string[]
 
@@ -148,8 +149,10 @@ export class CacheManager {
 
 	public static async create(vault: Vault, cacheDir: string, metadataFilePath: string, filePathsToOmitWhenClearingCache: string[] = []) {
 		const instance = new this(vault, cacheDir, metadataFilePath, filePathsToOmitWhenClearingCache);
-		if (!this.hasher)
-			this.hasher = await xxhash(); // Seems to be quick.
+		if (!CacheManager.isHasherInitialized) {
+			CacheManager.hasher = await xxhash(); // Seems to be quick.
+			CacheManager.isHasherInitialized = true;
+		}
 
 		await instance.initCache(); // This can be called lazily if it turns out reading the json file takes too long time.
 
@@ -172,8 +175,6 @@ export class CacheManager {
 			try {
 				await this.loadMetadata();
 				this.cacheInitiated = true;
-			} catch (error) {
-				throw error;
 			} finally {
 				this.initPromise = null; // Reset when done.
 			}
@@ -235,7 +236,7 @@ export class CacheManager {
 		Env.log.cm(Env.dev.icon.CACHE_MANAGER, "\t", "Current retain count: ", this.retainCount());
 
 		// If retainer/file does not exist / is not yet registered, it will be.
-		let retainer = this.metadataRoot.retainers[retainerPath];
+		const retainer = this.metadataRoot.retainers[retainerPath];
 		const cacheKeysCurrentlyReferenced = retainer ? [...retainer.ref] : [];
 
 		// Populate set of keys to retain.
@@ -340,7 +341,7 @@ export class CacheManager {
 	public renameRetainer(oldPath: string, path: string) {
 		Env.log.cm(Env.dev.icon.CACHE_MANAGER, `CacheManager.renameRetainer\n\t${oldPath}`);
 
-		let retainer = this.metadataRoot.retainers[oldPath];
+		const retainer = this.metadataRoot.retainers[oldPath];
 		if (retainer !== undefined) {
 			this.metadataRoot.retainers[path] = retainer;
 			delete this.metadataRoot.retainers[oldPath];
@@ -354,7 +355,7 @@ export class CacheManager {
 	public async removeRetainer(path: string) {
 		Env.log.cm(Env.dev.icon.CACHE_MANAGER, `CacheManager.removeRetainer\n\t${path}`);
 
-		let retainer = this.metadataRoot.retainers[path];
+		const retainer = this.metadataRoot.retainers[path];
 		if (retainer === undefined) {
 			// This can happen if a file which hasn't been open was deleted without opening it.
 			Env.log.cm("\tFailed: No retainer found.");
@@ -430,7 +431,7 @@ export class CacheManager {
 			// Increase count for each reference found.
 			for (const cacheKey of retainer.ref) {
 				// Note: make sure to `if (count !== undefined)` rather than `if(count)` otherwise `count` will not be treated as a `number` and addition will fail.
-				let count = retainCounts[cacheKey];
+				const count = retainCounts[cacheKey];
 				Env.assert(count !== undefined, "Retainer is referencing a cache key that does not exist", cacheKey);
 				if (count !== undefined)
 					retainCounts[cacheKey] = count + 1;
@@ -452,7 +453,7 @@ export class CacheManager {
 		* @returns `true` if the key is retained in {@link retainCounts}.
 		*/
 	private isRetained(retainCounts: Record<string, number>, key: string) {
-		let count = retainCounts[key];
+		const count = retainCounts[key];
 		return count === undefined || count === 0 ? false : true; // Since 1.0.6, retain counts of zero are actually not present in the dictionary anymore.
 	}
 
@@ -497,7 +498,7 @@ export class CacheManager {
 
 		//
 		const retainers: CacheRetainer[] = Object.values(this.metadataRoot.retainers);
-		const numberOfRetainers = retainers.length;
+		//const numberOfRetainers = retainers.length;
 
 		// Here the Mardown file has been deleted but its still exists as a retainer.
 		const retainersWithoutActualFile = [];
@@ -787,7 +788,7 @@ export class CacheManager {
 	 * Aborts current download requests for the specified file.
 	 * @todo
 	 */
-	async cancelOngoing(filePath: string) {
+	async cancelOngoing(_filePath: string) {
 		await sleep(100);
 	}
 
@@ -987,7 +988,7 @@ export class CacheManager {
 			return {
 				w: sizeCalcResult.width,
 				h: sizeCalcResult.height,
-				t: sizeCalcResult?.type ?? "",
+				t: sizeCalcResult.type ?? Env.str.EMPTY,
 			};
 		} catch (error) {
 			if (error instanceof TypeError)
