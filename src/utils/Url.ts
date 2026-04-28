@@ -10,6 +10,8 @@ export class Url {
 		contentLength: "Content-Length".toLowerCase(),
 		cacheControl: "Cache-Control".toLowerCase(),
 		expires: "Expires".toLowerCase(),
+		etag: "ETag".toLowerCase(),
+		lastModified: "Last-Modified".toLowerCase(),
 	} as const;
 
 	public static readonly CACHE_CONTROL_LOWERCASE = {
@@ -79,6 +81,40 @@ export class Url {
 	public static isLocal(url: string): boolean {
 		// Slashes are better: e.g., "app:data" or "file:info" are not URLs.
 		return url.startsWith("app://") || url.startsWith("capacitor://") || url.startsWith("file://");
+	}
+
+	/**
+		* Parses an ETag header value into a storage-friendly format.
+		* - `W/"abc"` -> `W/abc`
+		* - `"abc"` -> `abc`
+		* @param value The raw ETag header string.
+		* @returns The tag value stripped of quotes, with "W/" prefix preserved if present.
+		* @since 1.1.1
+		*/
+	public static parseETag(value: string | undefined): string | null {
+		if (!Env.str.isNonEmpty(value))
+			return null;
+
+		const match = value.match(/^(W\/)?"(.*)"$/);
+		if (match === null)
+			return null;
+
+		const prefix = match[1] !== undefined ? match[1] : Env.str.EMPTY;
+		const tag = match[2];
+		return `${prefix}${tag}`;
+	}
+
+	/**
+		* Converts a stored ETag back to a format suitable for HTTP headers.
+		* - `W/abc` -> `W/"abc"`
+		* - `abc` -> `"abc"`
+		* @param tag The stored ETag value.
+		* @since 1.1.1
+		*/
+	public static stringifyETag(tag: string): string | null {
+		if (Env.str.nonEmpty(tag) === undefined)
+			return null;
+		return tag.replace(/^(W\/)?(.*)$/, '$1"$2"');
 	}
 
 	public static trimBackslash(url: string): string {

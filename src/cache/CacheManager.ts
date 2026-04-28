@@ -891,12 +891,15 @@ export class CacheManager {
 
 			const response = await requestUrl({ url: sourceUrl, method: 'GET', throw: false });
 			const headers = Url.normalizeHeaders(response.headers);
-			const contentType = headers[Url.RESPONSE_HEADER_LOWERCASE.contentType] ?? undefined;
-			const cacheControl = headers[Url.RESPONSE_HEADER_LOWERCASE.cacheControl] ?? undefined;
+			const contentType = headers[Url.RESPONSE_HEADER_LOWERCASE.contentType];
+			const cacheControl = headers[Url.RESPONSE_HEADER_LOWERCASE.cacheControl];
+			const etag = Url.parseETag(headers[Url.RESPONSE_HEADER_LOWERCASE.etag]);
+			const lastModifiedHeader = headers[Url.RESPONSE_HEADER_LOWERCASE.lastModified];
+			const lastModified = lastModifiedHeader !== undefined ? new Date(lastModifiedHeader).toISOString() : undefined;
 
 			//Env.log.cm(Env.dev.icon.CACHE_MANAGER, `CacheManager:download: Got response:\n\tcacheID: ${cacheKey}\n\t${response.status}\n\tcontentType: ${contentType}`);
 
-			if (cacheControl == Url.CACHE_CONTROL_LOWERCASE.noStore)
+			if (cacheControl === Url.CACHE_CONTROL_LOWERCASE.noStore)
 				throw new CacheError(`Caching not allowed on ${sourceUrl}.`, cacheKey);
 
 			if (response.status >= 400)
@@ -926,6 +929,8 @@ export class CacheManager {
 					d: nowDateString,
 					l: nowDateString,
 					cc: cacheControl,
+					et: etag !== null ? etag : undefined,
+					m: lastModified,
 				},
 				f: {
 					s: sourceUrl,

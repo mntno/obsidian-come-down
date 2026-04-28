@@ -108,6 +108,7 @@ export const Env = {
 		SPACE: " ",
 		is: (value: unknown): value is string => typeof value === "string",
 		nonEmpty: (value: unknown): string | undefined => typeof value === "string" && value !== "" ? value : undefined,
+		isNonEmpty: (value: unknown): value is string => typeof value === "string" && value !== "",
 	} as const,
 
 	bool: {

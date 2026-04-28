@@ -75,9 +75,32 @@ export interface CacheMetadataTime {
   /** Download time */
   d: string;
 
-  /** Last accessed */
+  /**
+		* "Last time checked".
+		*
+		* Currently set to download time and never updated.
+		* @todo May be used to keep track of when the server was last checked for modified.
+		*/
   l: string;
 
   /** Value of the `Cache-Control` HTTP response header. */
   cc?: string;
+
+  /**
+		* Value of the `ETag` HTTP response header.
+		*
+		* In the HTTP spec (RFC 7232), an ETag must be wrapped in double quotes. But here they are not. Add them back when using the ETag in requests.
+		*
+		* @since 1.1.1
+		*/
+  et?: string;
+
+	/**
+		* Normalized value of the `Last-Modified` HTTP response header (ISO 8601).
+		*
+		* Converted from HTTP-date format to ISO for consistency. Convert back to UTC string when using in 'If-Modified-Since' headers.
+		*
+		* @since 1.1.1
+		*/
+  m?: string;
 }

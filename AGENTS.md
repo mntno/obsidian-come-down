@@ -29,6 +29,8 @@ pnpm run dev
 
 ### Production build
 
+Use this when verifying changes.
+
 ```bash
 pnpm run build
 ```
