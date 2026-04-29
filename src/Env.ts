@@ -1,67 +1,79 @@
 import { App, Platform } from "obsidian";
 
-const isProduction = process.env.NODE_ENV === "production";
+const isProduction = process.env["NODE_ENV"] === "production";
 const isDev = !isProduction;
+const assertConsole: Pick<Console, "assert"> = console;
 
-const noopLogger = {
+const noopLogger: Pick<Console, "debug" | "log" | "info" | "warn" | "error" | "assert"> = {
 	debug: () => { },
 	log: () => { },
 	info: () => { },
 	warn: () => { },
+	error: () => { },
+	assert: () => { },
 };
-
 const devLogger = isDev ? console : noopLogger;
 
-export const DevContext = {
-	assert: isDev ? console.assert : () => { },
+/** Returns the dev logger when {@link enabled}, otherwise a no-op. */
+const gate = (enabled: boolean) => enabled ? devLogger.info : noopLogger.info;
+
+const _DevContext = {
+	e: devLogger.error,
+	assert: devLogger.assert,
 	IS_DEV: isDev,
 	runDev: isProduction ? () => { } : (action: () => void) => action(),
 
 	/** @returns The result of evaluating {@link thunk} if {@link IS_DEV} is `true`. */
-	thunkedStr: (thunk: () => string) => isDev ? thunk() : "",
+	thunkedStr: (thunk: () => string) => isDev ? thunk() : Env.str.EMPTY,
+
+	thunkedAssert: (thunk: () => boolean) => isDev ? thunk() : true,
 
 	logCategory: {
 		CACHE_MANAGER: true,
 		DEBUGGING: true,
 		EDIT_UPDATE_PASS: true,
 		POST_PROCESS_PASS: true,
-		WORKAROUNDS: false,
+		WORKAROUNDS: true,
+		OBSERVER: true,
 	} as const,
 
 	icon: {
-		DEBUG: "🐞",
+		DEBUG: "🔍",
 		CACHE_MANAGER: "📦",
 		EDIT_UPDATE_PASS: "✏️",
 		POST_PROCESS_PASS: "📖",
 		WORKAROUND: "🔧",
+		OBSERVER: "👁️",
 	} as const,
-} as const;
+};
+const DevContext: Readonly<typeof _DevContext> = _DevContext;
 
-export const Env = {
+const _log = {
+	d: devLogger.debug,
+	l: devLogger.log,
+	i: devLogger.info,
+	w: console.warn,
+	e: console.error,
+
+	debug: gate(_DevContext.logCategory.DEBUGGING),
+	edit: gate(_DevContext.logCategory.EDIT_UPDATE_PASS),
+	read: gate(_DevContext.logCategory.POST_PROCESS_PASS),
+	cm: gate(_DevContext.logCategory.CACHE_MANAGER),
+	workaround: gate(_DevContext.logCategory.WORKAROUNDS),
+	observer: gate(_DevContext.logCategory.OBSERVER),
+};
+const log: Readonly<typeof _log> = _log;
+
+const _Env = {
 	/** Debug/Dev context */
 	dev: DevContext,
 	isDev: DevContext.IS_DEV,
 
-	/** Only for `null` or `undefined`, etc., checks. Used as a self-documenting check on that behavior. {@link DevContext#assert} */
-	assert: console.assert,
+	/** Only for `null` or `undefined`, etc., checks. Used as a self-documenting check on that behavior. {@link DevContext.assert} */
+	assert: assertConsole.assert,
+	catch: console.error,
 
-	log: {
-		noop: () => { },
-
-		d: devLogger.debug,
-		l: devLogger.log,
-		i: devLogger.info,
-		w: console.warn,
-		e: console.error,
-
-		/* eslint-disable @typescript-eslint/no-unnecessary-condition */
-		debug: DevContext.logCategory.DEBUGGING ? devLogger.info : noopLogger.info,
-		edit: DevContext.logCategory.EDIT_UPDATE_PASS ? devLogger.info : noopLogger.info,
-		read: DevContext.logCategory.POST_PROCESS_PASS ? devLogger.info : noopLogger.info,
-		cm: DevContext.logCategory.CACHE_MANAGER ? devLogger.info : noopLogger.info,
-		workaround: DevContext.logCategory.WORKAROUNDS ? devLogger.info : noopLogger.info,
-		/* eslint-enable @typescript-eslint/no-unnecessary-condition */
-	},
+	log: log,
 
 	perf: {
 		now: (): DOMHighResTimeStamp => performance.now(),
@@ -76,12 +88,12 @@ export const Env = {
 		*/
 	clearBrowserCache: (appOrCallback: (() => void) | App) => {
 		if (isDev && Platform.isDesktopApp) {
-			// eslint-disable-next-line @typescript-eslint/no-require-imports
-			require('electron').remote.session.defaultSession.clearCache()
+			// eslint-disable-next-line @typescript-eslint/no-require-imports -- `electron` is only available in the Obsidian desktop runtime, never as a bundled dependency
+			const electron = require('electron') as { remote: { session: { defaultSession: { clearCache: () => Promise<void> } } } };
+			electron.remote.session.defaultSession.clearCache()
 				.then(() => {
 					if (appOrCallback instanceof App) {
-						// @ts-expect-error
-						appOrCallback.commands.executeCommandById("app:reload");
+						(appOrCallback as unknown as { commands: { executeCommandById: (commandId: string) => void } }).commands.executeCommandById("app:reload");
 					}
 					else
 						appOrCallback();
@@ -114,7 +126,7 @@ export const Env = {
 	bool: {
 		isTrue: (value: unknown): value is boolean => typeof value === "boolean" && value === true,
 	} as const,
-
-} as const;
+};
+export const Env: Readonly<typeof _Env> = _Env;
 
 export type LoggerFn = (...args: unknown[]) => void;

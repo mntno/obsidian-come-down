@@ -18,14 +18,21 @@ export class Logger {
 	}
 
 	protected joinArgs(args: unknown[]): string {
-		return args.length === 0 ? Env.str.EMPTY : `(${args.join(" ")})`;
+		return args.length === 0 ? Env.str.EMPTY : `(${args.join(Env.str.SPACE)})`;
 	}
 
-	public msg(...args: unknown[]) {
+	/**
+	 * Formats the args for logging.
+	 * @throws {TypeError} If a value of type {@link Symbol} is passed, mirroring `Array.prototype.join`'s behavior.
+	 */
+	public msg(...args: unknown[]): string {
 		if (!Env.isDev)
 			return Env.str.EMPTY;
 
-		const mappedArgs = args.map(arg => arg === undefined ? "undefined" : arg);
-		return `${this.symbol} ${mappedArgs.join(Env.str.SPACE)} ${this.idString}`;
+		const body = args.length > 0
+			? ` ${args.map(String).join(Env.str.SPACE)}`
+			: Env.str.EMPTY;
+
+		return `${this.symbol}${body} ${this.idString}`;
 	}
 }

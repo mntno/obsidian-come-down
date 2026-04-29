@@ -2,15 +2,21 @@ import { EditorView, ViewPlugin, ViewUpdate } from "@codemirror/view";
 import { CacheFetchError, CacheItem, CacheManager, CacheRequest, CacheTypeError } from "cache/CacheManager";
 import { Env } from "Env";
 import { MarkdownPostProcessorContext, Plugin, TFile, normalizePath } from "obsidian";
+import { BlobUrlManager } from "processing/BlobUrlManager";
 import { EditorViewPlugin, EditorViewPluginInfo } from "processing/EditorViewPlugin";
 import { HTMLElementAttribute, HTMLElementCacheState, HtmlAssistant } from "processing/HtmlAssistant";
 import { ProcessingContext } from "processing/ProcessingContext";
 import { ProcessingPass } from "processing/ProcessingPass";
-import { PluginSettings, SettingTab, SettingsManager } from "Settings";
+import { PluginSettings, SettingsManager } from "Settings";
+import { Prettify } from "types";
 import { InfoModal } from "ui/InfoModal";
 import { Notice } from "ui/Notice";
+import { SettingTab } from "ui/SettingTab";
+import { ContainerObserver } from "utils/ContainerObserver";
 import { queueAsyncMicrotask, sleep } from "utils/dom";
 import { File } from "utils/File";
+import { Obj } from "utils/ts";
+import { BlobUrl } from "utils/Url";
 
 
 interface PluginData {
@@ -25,6 +31,8 @@ export default class ComeDownPlugin extends Plugin {
 	private data!: PluginData;
 	private settingsManager!: SettingsManager;
 	private cacheManager!: CacheManager;
+	private containerObserver!: ContainerObserver;
+	private blobUrlManager = new BlobUrlManager();
 
 	override async onload() {
 		Env.log.d("Plugin:onload");
@@ -43,7 +51,7 @@ export default class ComeDownPlugin extends Plugin {
 			async (_settings) => await this.saveData(this.data),
 			(name) => {
 				if (name === SettingsManager.SETTING_NAME.gitIgnoreCacheDir)
-					this.ensureGitIgnore();
+					this.ensureGitIgnore().catch(Env.catch);
 			}
 		);
 		this.addSettingTab(new SettingTab(this, this.settingsManager, this.cacheManager));
@@ -59,7 +67,7 @@ export default class ComeDownPlugin extends Plugin {
 		this.registerEvent(
 			this.app.vault.on('delete', (file) => {
 				if (file instanceof TFile) {
-					this.cacheManager.removeRetainer(file.path).then(() => this.cacheManager.saveMetadataIfDirty());
+					this.cacheManager.removeRetainer(file.path).then(() => this.cacheManager.saveMetadataIfDirty()).catch(Env.catch);
 				}
 			})
 		);
@@ -68,14 +76,31 @@ export default class ComeDownPlugin extends Plugin {
 			this.app.vault.on('rename', (file, oldPath) => {
 				if (file instanceof TFile) {
 					this.cacheManager.renameRetainer(oldPath, file.path);
-					this.cacheManager.saveMetadataIfDirty();
+					this.cacheManager.saveMetadataIfDirty()?.catch(Env.catch);
 				}
 			})
 		);
 
+		this.containerObserver = new ContainerObserver({
+			selectors: [".lightbox"],
+			onAdded: (container) => {
+				this.blobUrlManager.createContainerBlobs(container, async (source) => {
+					const fileOrError = await this.cacheManager.readCachedFile(source);
+					if (fileOrError instanceof Error)
+						return fileOrError;
+
+					return HtmlAssistant.createBlobObjectUrlFromBytes(fileOrError.bytes, fileOrError.type);
+				}).catch(Env.catch);
+			},
+			onRemoved: (container) => {
+				this.blobUrlManager.revokeContainerBlobs(container);
+			}
+		});
+		this.containerObserver.startObserving();
+
 		this.app.workspace.onLayoutReady(() => {
-			setTimeout(() => this.removeSyncConflictFiles(), 1000);
-			this.registerInterval(window.setInterval(() => this.cacheManager.checkIfMetadataFileChangedExternally().catch(Env.log.e), 1000 * 60 * 10));
+			window.setTimeout(() => void this.removeSyncConflictFiles(), 1000);
+			this.registerInterval(window.setInterval(() => void this.cacheManager.checkIfMetadataFileChangedExternally().catch(Env.log.e), 1000 * 60 * 10));
 
 			if (Env.isDev) {
 				this.addCommand({
@@ -92,7 +117,7 @@ export default class ComeDownPlugin extends Plugin {
 					id: "delete-all-cache-and-reload",
 					name: "Delete cache and reload",
 					callback: () => {
-						this.cacheManager.clearCached((error) => {
+						void this.cacheManager.clearCached((error) => {
 							if (error)
 								Env.log.e("Failed to clear cache", error);
 							else
@@ -104,9 +129,11 @@ export default class ComeDownPlugin extends Plugin {
 		});
 	}
 
-	override async onunload() {
+	public override onunload() {
 		Env.log.d("Plugin:onunload");
-		await this.cacheManager.cancelAllOngoing();
+		this.containerObserver.endObserving();
+		this.blobUrlManager.revokeAll();
+		this.cacheManager.cancelAllOngoing().catch(Env.catch);
 	}
 
 	override onExternalSettingsChange() {
@@ -115,14 +142,14 @@ export default class ComeDownPlugin extends Plugin {
 		ComeDownPlugin.loadPluginData(this).then(data => {
 			this.data = data;
 			this.settingsManager.onSettingsChangedExternally(this.data.settings);
-			setTimeout(() => this.cacheManager.checkIfMetadataFileChangedExternally(), 1000);
-		})
+			window.setTimeout(() => void this.cacheManager.checkIfMetadataFileChangedExternally().catch(Env.catch), 1000);
+		}).catch(Env.catch);
 	}
 
 	private static async loadPluginData(plugin: Plugin): Promise<PluginData> {
 		Env.log.d("Plugin:loadPluginData");
-		const data = await plugin.loadData(); // Returns `null` if file doesn't exist.
-		return Object.assign({}, DEFAULT_DATA, data);
+		const data = Obj.try<Prettify<Partial<PluginData>>>(await plugin.loadData()); // Returns `null` if file doesn't exist.
+		return Object.assign({}, DEFAULT_DATA, data) satisfies PluginData;
 	}
 
 	/**
@@ -379,24 +406,24 @@ export default class ComeDownPlugin extends Plugin {
 	async requestCache(imageElements: HTMLImageElement[], pass: ProcessingPass) {
 		const l = pass.ctx.logr;
 
-		imageElements = imageElements.filter((imageElement) => HtmlAssistant.isElementCacheStateEqual(imageElement, HTMLElementCacheState.ORIGINAL_SRC_REMOVED, HTMLElementCacheState.CACHE_FAILED));
+		const eligibleImages = imageElements.filter((imageElement) => HtmlAssistant.isElementCacheStateEqual(imageElement, HTMLElementCacheState.SRC_REMOVED, HTMLElementCacheState.CACHE_FAILED));
 
-		l.log(l.t(() => l.msg("Plugin:requestCache", "\n\t", `Got ${imageElements.length} <img> elements to populate.`)));
-		if (imageElements.length == 0) {
+		l.log(l.t(() => l.msg("Plugin:requestCache", "\n\t", `Got ${eligibleImages.length} <img> elements to populate.`)));
+		if (eligibleImages.length == 0) {
 			l.log(l.abortMsg("nothing to do"));
 			return;
 		}
 
 		await this.cacheManager.checkIfMetadataFileChangedExternally();
 
-		const requestGroups = groupRequests(imageElements, this.cacheManager, pass);
+		const requestGroups = groupRequests(eligibleImages, this.cacheManager, pass);
 
 		// First try to get src from local cache.
 		for (const requestGroup of requestGroups) {
 			const existingCacheResult = await this.cacheManager.existingCache(requestGroup.request, true);
 			l.log(l.t(() => l.msg(`Plugin:requestCache: ${existingCacheResult.item ? "Found" : "Did not find"} key ${existingCacheResult.cacheKey}. ${existingCacheResult.fileExists === undefined ? "Unknown if file exists." : `${existingCacheResult.fileExists ? "File exists." : "File does not exist."}`}`)));
 			if (existingCacheResult.item)
-				await handleRequestGroup(existingCacheResult.item, requestGroup);
+				await handleRequestGroup(existingCacheResult.item, requestGroup, (blobUrl) => this.blobUrlManager.registerInitialBlob(blobUrl, requestGroup.request.source));
 		};
 
 		const remainingRequestGroups = requestGroups.filter((requestGroup) => !requestGroup.cacheFileFound);
@@ -450,7 +477,7 @@ export default class ComeDownPlugin extends Plugin {
 					const resultItem = result.item;
 					l.log(Env.dev.thunkedStr(() => l.msg(`Plugin:requestCache:\n\tSettings src on ${imageElements.length} images\n\t${resultItem.metadata.f.n}\n\t${pass.ctx.ppCtx ? `In HTML post processor` : `In edit listener`}`)));
 					if (result.fileExists === true)
-						await handleRequestGroup(resultItem, requestGroup);
+						await handleRequestGroup(resultItem, requestGroup, (blobUrl) => this.blobUrlManager.registerInitialBlob(blobUrl, requestGroup.request.source));
 					else
 						imageElements.forEach((imageElement) => HtmlAssistant.setFailed(imageElement));
 				}
@@ -469,7 +496,7 @@ export default class ComeDownPlugin extends Plugin {
 					if (result.error instanceof CacheFetchError && result.error.isInternetDisconnected)
 						new Notice("No internet connection.");
 				}
-			});
+			}).catch(Env.catch);
 		});
 
 		/**
@@ -481,9 +508,13 @@ export default class ComeDownPlugin extends Plugin {
 			* @param cacheItem
 			* @param requestGroup
 			*/
-		async function handleRequestGroup(cacheItem: CacheItem, requestGroup: RequestGroup) {
+		async function handleRequestGroup(cacheItem: CacheItem, requestGroup: RequestGroup, onBlobCreated?: (blobUrl: BlobUrl) => void) {
 			const imageElements = requestGroup.imageElements;
-			const errorResult = await HtmlAssistant.loadImages(imageElements, cacheItem.resourcePath);
+			const errorResult = await HtmlAssistant.loadImages(
+				imageElements,
+				cacheItem.resourcePath,
+				onBlobCreated
+			);
 
 			if (errorResult) {
 				// File as not found on disk.

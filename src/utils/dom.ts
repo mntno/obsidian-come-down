@@ -46,7 +46,7 @@ export function queueAsyncMicrotask<T = void>(operation: () => Promise<T>): void
 }
 
 export function sleep(milliseconds: number): Promise<void> {
-	return new Promise(resolve => setTimeout(resolve, milliseconds));
+	return new Promise(resolve => window.setTimeout(resolve, milliseconds));
 }
 
 /**
@@ -68,7 +68,7 @@ export function waitForElementAttachment(element: HTMLElement, timeoutMs = 500, 
 				else
 					resolve(err);
 			} else {
-				setTimeout(check, delay);
+				window.setTimeout(check, delay);
 			}
 		};
 		check();

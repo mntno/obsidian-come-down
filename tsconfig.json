@@ -12,27 +12,22 @@
 		"inlineSourceMap": true,
 		"inlineSources": true,
 
-		"target": "ES2024",
+		"target": "ES2022",
 		"lib": [
 			"DOM",
-			"ES2024"
+			"ES2022"
 		],
 		"types": ["node"],
 
 		"moduleResolution": "bundler",
 		"isolatedModules": true,
-
-		"importHelpers": true,
+		"verbatimModuleSyntax": false,
 
 		"noUncheckedIndexedAccess": true,
 		"noImplicitOverride": true,
-		"noPropertyAccessFromIndexSignature": false,
+		"noPropertyAccessFromIndexSignature": true,
 		"erasableSyntaxOnly": false,
 		"exactOptionalPropertyTypes": false,
-
-		// For ESLint to handle:
-		"allowUnreachableCode": true,
-		"allowUnusedLabels": true,
 	},
 	"include": [
 		"./src/**/*.ts"

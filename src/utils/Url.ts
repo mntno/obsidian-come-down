@@ -1,4 +1,9 @@
 import { Env } from "../Env";
+import { FileInfo } from "types";
+import { Str } from "utils/ts";
+
+declare const brand: unique symbol;
+export type BlobUrl = string & { readonly [brand]: 'BlobUrl' };
 
 export class Url {
 
@@ -47,9 +52,9 @@ export class Url {
 		*/
 	public static isValidExternalUrl(src: string | null | undefined, success?: (src: string) => void): boolean {
 		if (Env.str.is(src)) {
-			src = src.trim();
-			if (src.length > 0 && Url.isValid(src) && Url.isExternal(src)) {
-				success?.(src);
+			const trimmedSrc = src.trim();
+			if (trimmedSrc.length > 0 && Url.isValid(trimmedSrc) && Url.isExternal(trimmedSrc)) {
+				success?.(trimmedSrc);
 				return true;
 			}
 		}
@@ -81,6 +86,11 @@ export class Url {
 	public static isLocal(url: string): boolean {
 		// Slashes are better: e.g., "app:data" or "file:info" are not URLs.
 		return url.startsWith("app://") || url.startsWith("capacitor://") || url.startsWith("file://");
+	}
+
+	public static toBlobUrl(url: string): BlobUrl {
+		Env.dev.assert(Env.dev.thunkedAssert(() => Url.isBlob(url)), Env.dev.thunkedStr(() =>`Expected a blob: URL, got: ${url}`));
+		return url as BlobUrl;
 	}
 
 	/**
@@ -121,34 +131,31 @@ export class Url {
 		return url.endsWith("/") ? url.slice(0, -1) : url;
 	}
 
-	/** @author Gemini */
-	public static extractFilenameAndExtension(url: string): { filename: string, extension: string } | null {
+	public static extractFilenameAndExtension(url: string): FileInfo | null {
 		try {
 			const urlObj = new URL(url);
 			const pathname = urlObj.pathname;
 
-			if (!pathname) {
+			if (!Str.isNonEmpty(pathname))
 				return null; // No pathname, cannot extract filename
-			}
 
 			const filenameWithExtension = pathname.substring(pathname.lastIndexOf('/') + 1).split('?')[0]; // Remove query params
 
-			if (!filenameWithExtension) {
+			if (!Str.isNonEmpty(filenameWithExtension))
 				return null; // No filename found
-			}
 
-			const lastDotIndex = filenameWithExtension.lastIndexOf('.');
+			const lastDotIndex = filenameWithExtension.lastIndexOf(".");
 
-			if (lastDotIndex === -1) {
-				return { filename: filenameWithExtension, extension: '' }; // No extension
-			}
+			if (lastDotIndex === -1)
+				return { filename: filenameWithExtension, extension: Str.empty }; // No extension
 
-			const filename = filenameWithExtension.substring(0, lastDotIndex);
-			const extension = filenameWithExtension.substring(lastDotIndex + 1);
+			return {
+				filename: filenameWithExtension.substring(0, lastDotIndex),
+				extension: filenameWithExtension.substring(lastDotIndex + 1),
+			};
 
-			return { filename, extension };
 		} catch (error) {
-			Env.log.e(`Error parsing URL: ${error}`);
+			Env.log.e("Error parsing URL: ", error);
 			return null; // Invalid URL
 		}
 	}

@@ -22,5 +22,8 @@ data.json
 ## Git stores symlinks as a special file containing the target path string, not as a directory. So the gitignore rule needs to match a file, not a directory pattern.
 dev-vault
 
+## Temporary files
+temp
+
 main.js
 cache.json

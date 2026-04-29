@@ -5,3 +5,8 @@
 export type Prettify<T> = {
 	[K in keyof T]: T[K];
 } & {};
+
+export interface FileInfo {
+	filename: string;
+	extension: string;
+}

@@ -23,7 +23,7 @@ export class InfoModal extends Modal {
 				button.setButtonText("Delete");
 				button.onClick(() => {
 					button.setButtonText("Confirm cache delete");
-					button.setWarning();
+					button.setDestructive();
 					button.onClick(async () => {
 
 						await cacheManager.clearCached((error) => {
@@ -70,15 +70,17 @@ export class InfoModal extends Modal {
 	clearCacheButton!: ButtonComponent;
 	closeButton!: ButtonComponent;
 
-	override onOpen(): void {
-		super.onOpen();
+	public override onOpen(): Promise<void> | void {
+		const result = super.onOpen();
+
 		this.cacheManager.registerMetadataChanged(this.onMetadataChangedCallback);
-		setTimeout(() => {
+		window.setTimeout(() => {
 			this.clearCacheButton.buttonEl.tabIndex = 0
 			this.closeButton.buttonEl.focus();
 		});
-
 		this.populate();
+
+		return result;
 	}
 
 	override onClose(): void {
@@ -87,7 +89,7 @@ export class InfoModal extends Modal {
 	}
 
 	private populate() {
-		setTimeout(() => {
+		window.setTimeout(() => {
 
 			this.debugInfoSetting?.descEl.empty();
 
@@ -96,11 +98,11 @@ export class InfoModal extends Modal {
 
 				if (this.debugInfoSetting) {
 					for (const line of info.summary.split("\n"))
-						this.debugInfoSetting.descEl.createEl("div", {}, (p) => {
+						this.debugInfoSetting.descEl.createDiv({}, (p) => {
 							p.innerText = line;
 						})
 				}
-			});
+			}).catch(Env.catch);
 		});
 	}
 

@@ -1,18 +1,26 @@
 import { Env } from "Env";
 import { ObsAssistant } from "utils/ObsAssistant";
 import { Err } from "utils/ts";
-import { Url } from "utils/Url";
+import { BlobUrl, Url } from "utils/Url";
+
+declare global {
+	interface DOMStringMap {
+		comeDownState?: string;
+		/** @todo When enabling `erasableSyntaxOnly`, set the type to the values of {@link HTMLElementCacheState}. */
+		comeDownOriginalSource?: string;
+	}
+}
 
 export const enum HTMLElementCacheState {
 	/** Untouched by the plugin. */
 	ORIGINAL = 0,
 
 	/**
-		* The original src url has been removed. Element is ready to request.
-		*
-		* A `data` attribute has been set on the element with the original src, get it with {@link HtmlAssistant.originalSrc}.
-		*/
-	ORIGINAL_SRC_REMOVED,
+	 * The src url has been removed. Element is ready to request.
+	 *
+	 * A `data` attribute has been set on the element with the original src, get it with {@link HtmlAssistant.originalSrc}.
+	 */
+	SRC_REMOVED,
 
 	/** Requesting cache. If cache found, will be changed to {@link CACHE_SUCCEEDED}; if not, to {@link REQUESTING_DOWNLOADING}. */
 	REQUESTING,
@@ -25,7 +33,7 @@ export const enum HTMLElementCacheState {
 
 	/**
 		* Cache was requested but failed. As opposed to {@link INVALID}, these can be retried.
-		* Basically equal to {@link ORIGINAL_SRC_REMOVED} except that they have requested at least once.
+		* Basically equal to {@link SRC_REMOVED} except that they have requested at least once.
 		*
 		* For example, connection failed.
 		*/
@@ -72,25 +80,24 @@ export class HtmlAssistant {
 			return HTMLElementCacheState.ORIGINAL;
 		}
 
-		const numericState = Number(state);
+		const numericState: HTMLElementCacheState = Number(state);
 
-		if (
-			numericState !== HTMLElementCacheState.ORIGINAL &&
-			numericState !== HTMLElementCacheState.ORIGINAL_SRC_REMOVED &&
-			numericState !== HTMLElementCacheState.REQUESTING &&
-			numericState !== HTMLElementCacheState.REQUESTING_DOWNLOADING &&
-			numericState !== HTMLElementCacheState.CACHE_SUCCEEDED &&
-			numericState !== HTMLElementCacheState.CACHE_FAILED &&
-			numericState !== HTMLElementCacheState.INVALID
-		) {
-			throw new Error(`Invalid cache state: ${state}`);
+		switch (numericState) {
+			case HTMLElementCacheState.ORIGINAL:
+			case HTMLElementCacheState.SRC_REMOVED:
+			case HTMLElementCacheState.REQUESTING:
+			case HTMLElementCacheState.REQUESTING_DOWNLOADING:
+			case HTMLElementCacheState.CACHE_SUCCEEDED:
+			case HTMLElementCacheState.CACHE_FAILED:
+			case HTMLElementCacheState.INVALID:
+				return numericState;
+			default:
+				throw new Error(`Invalid cache state: ${state}`);
 		}
-
-		return numericState as HTMLElementCacheState;
 	}
 
 	public static setCacheState(element: HTMLElement, state: HTMLElementCacheState) {
-		Env.log.d("HtmlAssistant:setCacheState:", state);
+		Env.log.d(Env.dev.icon.DEBUG, Env.dev.thunkedStr(() => `HtmlAssistant:setCacheState: ${state}`));
 		element.dataset.comeDownState = state.toString();
 	}
 
@@ -100,18 +107,42 @@ export class HtmlAssistant {
 		*
 		* @param imageElements
 		* @param src
+		* @param onBlobCreated
 		* @returns Assume file not found when an {@link Error} is returned, see {@link createBlobObjectUrl}.
 		*/
-	public static async loadImages(imageElements: HTMLImageElement[], src: string) {
-		const result = await this.createBlobObjectUrl(src);
+	public static async loadImages(imageElements: HTMLImageElement[], src: string, onBlobCreated?: (blobUrl: BlobUrl) => void) {
+		Env.log.d(Env.dev.icon.DEBUG, Env.dev.thunkedStr(() => `HtmlAssistant:loadImages: ${imageElements.length}, ${src}`));
+		const blobUrl = await this.createBlobObjectUrl(src);
 
-		if (result instanceof Error) {
+		if (blobUrl instanceof Error) {
 			return {
-				error: result,
-				fileNotFound: result instanceof HtmlAssistantFileNotFoundError,
+				error: blobUrl,
+				fileNotFound: blobUrl instanceof HtmlAssistantFileNotFoundError,
 			};
 		}
 		else {
+			onBlobCreated?.(blobUrl);
+			this.setSrcAndRevokeOnLoad(blobUrl, imageElements);
+			return null;
+		}
+	}
+
+	/**
+	 * Sets {@link url} on all {@link imageElements}.
+	 *
+	 * - If {@link url} is a blob URL (per {@link Url.isBlob}), it must already have been created via
+	 *   {@link HtmlAssistant.createBlobObjectUrl} or {@link HtmlAssistant.createBlobObjectUrlFromBytes}.
+	 *   Once all {@link imageElements} have loaded, the blob URL is revoked via {@link URL.revokeObjectURL}.
+	 * - If {@link url} is not a blob URL, it is simply set on all {@link imageElements}; no load
+	 *   listeners are attached and nothing is revoked.
+	 *
+	 * @param url The URL to set on the image elements.
+	 * @param imageElements The image elements to set the URL on.
+	 */
+	public static setSrcAndRevokeOnLoad(url: BlobUrl | string, imageElements: HTMLImageElement[]) {
+		Env.log.d(Env.dev.icon.DEBUG, Env.dev.thunkedStr(() => `HtmlAssistant:setSrcAndRevokeOnLoad: blob: ${Url.isBlob(url)}, number of img: ${imageElements.length}, ${url}`));
+
+		if (Url.isBlob(url)) {
 			let remainingLoads = imageElements.length;
 
 			const onLoad = (event: Event) => {
@@ -119,20 +150,20 @@ export class HtmlAssistant {
 				img.removeEventListener("load", onLoad);
 
 				remainingLoads--;
-				if (remainingLoads === 0) {
-					URL.revokeObjectURL(result);
-				}
+				if (remainingLoads === 0)
+					URL.revokeObjectURL(url);
 			};
 
 			for (const imageElement of imageElements) {
 				imageElement.addEventListener("load", onLoad);
-				imageElement.setAttribute(HTMLElementAttribute.SRC, result);
+				imageElement.setAttribute(HTMLElementAttribute.SRC, url);
 			}
-
-			return null;
+		} else {
+			for (const imageElement of imageElements) {
+				imageElement.setAttribute(HTMLElementAttribute.SRC, url);
+			}
 		}
 	}
-
 	/**
 		* Removes all the data sets from the element.
 		* @param element
@@ -157,14 +188,17 @@ export class HtmlAssistant {
 		HtmlAssistant.setIcon(element, HtmlAssistant.failedIcon);
 	}
 
-	private static setCanceled(element: HTMLImageElement) {
-		HtmlAssistant.setCacheState(element, HTMLElementCacheState.ORIGINAL_SRC_REMOVED);
+	/** Sets the {@link HTMLElementCacheState} removes the {@link element}'s `src`, preventing it from loading.
+	 * The {@link placeholderIcon} is set on the {@link element}.
+	 */
+	public static setCanceled(element: HTMLImageElement) {
+		HtmlAssistant.setCacheState(element, HTMLElementCacheState.SRC_REMOVED);
 		HtmlAssistant.setIcon(element, HtmlAssistant.placeholderIcon);
 	}
 
 	/**
-		* - Removes the `src` attribute to prevent ordinary loading.
-		* - Sets the state to {@link HTMLElementCacheState.ORIGINAL_SRC_REMOVED}.
+		* - Calls {@link setCanceled} to prevent ordinary loading.
+		* - Sets the state to {@link HTMLElementCacheState.SRC_REMOVED}.
 		* - Will not do anything if:
 		*   - `src` attrib is missing or empty string; if
 		*   - {@link imageElements} is empty.
@@ -183,7 +217,7 @@ export class HtmlAssistant {
 			if (src === null)
 				return false;
 
-			if (HtmlAssistant.cacheState(imageElement) === HTMLElementCacheState.ORIGINAL_SRC_REMOVED)
+			if (HtmlAssistant.cacheState(imageElement) === HTMLElementCacheState.SRC_REMOVED)
 				return false;
 
 			if (Env.isDev && src && Url.isBlob(src))
@@ -205,14 +239,14 @@ export class HtmlAssistant {
 	}
 
 	/**
-		* First checks if state is set to {@link HTMLElementCacheState.ORIGINAL_SRC_REMOVED}, if so, returns `true`.
+		* First checks if state is set to {@link HTMLElementCacheState.SRC_REMOVED}, if so, returns `true`.
 		* If not, checks if the images `src` is a valid, external URL.
 		*
 		* Because images that need to be processed may have been set to icons (non-external urls), it is preferred to use this method rather than {@link Url.isValidExternalUrl} directly.
 		*/
 	public static isImageToProcess(imageElement: HTMLImageElement) {
 		// Check if it's already been canceled before checking the url.
-		if (HtmlAssistant.cacheState(imageElement) === HTMLElementCacheState.ORIGINAL_SRC_REMOVED)
+		if (HtmlAssistant.cacheState(imageElement) === HTMLElementCacheState.SRC_REMOVED)
 			return true;
 
 		const src = HtmlAssistant.getSrc(imageElement);
@@ -229,7 +263,7 @@ export class HtmlAssistant {
 
 	/** @returns A trimmed, non-empty string; or `null` if no original source exists on the element. */
 	public static originalSrc(element: HTMLImageElement, checkSrc: boolean = false): string | null {
-		const src = element.dataset.comeDownOriginalSource ?? null;
+		const src = element.dataset.comeDownOriginalSource !== undefined ? element.dataset.comeDownOriginalSource : null;
 		if (src === null && checkSrc && HtmlAssistant.cacheState(element) === HTMLElementCacheState.ORIGINAL)
 			return HtmlAssistant.getSrc(element)
 		else
@@ -247,6 +281,8 @@ export class HtmlAssistant {
 		* @returns
 		*/
 	public static findAllImageElements(element: HTMLElement, requireSrcAttribute: boolean = true, filter?: (imageElement: HTMLImageElement) => boolean): HTMLImageElement[] {
+		Env.log.d(Env.dev.icon.DEBUG, Env.dev.thunkedStr(() => `HtmlAssistant:findAllImageElements: ${element.tagName} .${[...element.classList].join('.')}, requireSrcAttribute: ${requireSrcAttribute}`));
+
 		let imageElements;
 		if (requireSrcAttribute)
 			imageElements = element.findAll(HtmlAssistant.FIND_ALL_IMG_SELECTOR_REQ_SRC) as HTMLImageElement[];
@@ -259,23 +295,23 @@ export class HtmlAssistant {
 	private static readonly FIND_ALL_IMG_SELECTOR = 'img:not([aria-hidden="true"])';
 
 	/**
-		*
-		* @see {@link https://developer.mozilla.org/en-US/docs/Web/API/File_API/Using_files_from_web_applications#using_object_urls|Using object URLs}
-		*
-		* @remarks
-		*
-		* If {@link src} points to a local file that doesn't exist, the Dev Tools will show "net::ERR_FILE_NOT_FOUND".
-		* The net::ERR_FILE_NOT_FOUND message you see in the console comes from the browser’s internal networking layer, only shown in DevTools, not available to JavaScript code.
-		* However, in Electron and Chrome-based browsers, fetch() throwing a TypeError generally means the file doesn’t exist.
-		*
-		* Capacitor also, which runs on the native mobile webview, also throws a `TypeError` on iOS (not tested on Android).
-		*
-		* To be safe, assume all `Error`s is file not found.
-		*
-		* @param src Url to a local resource. Would start with `app://`, `capacitor://`, or perhaps `file://`
-		* @returns On failure, a {@link HtmlAssistantFileNotFoundError} if it thinks the a give local file doesn't exist; otherwise a normal Error.
+	 *
+	 * @see {@link https://developer.mozilla.org/en-US/docs/Web/API/File_API/Using_files_from_web_applications#using_object_urls|Using object URLs}
+	 *
+	 * @remarks
+	 *
+	 * If {@link src} points to a local file that doesn't exist, the Dev Tools will show "net::ERR_FILE_NOT_FOUND".
+	 * The net::ERR_FILE_NOT_FOUND message you see in the console comes from the browser’s internal networking layer, only shown in DevTools, not available to JavaScript code.
+	 * However, in Electron and Chrome-based browsers, fetch() throwing a TypeError generally means the file doesn’t exist.
+	 *
+	 * Capacitor also, which runs on the native mobile webview, also throws a `TypeError` on iOS (not tested on Android).
+	 *
+	 * To be safe, assume all `Error`s is file not found.
+	 *
+	 * @param src Url to a local resource. Would start with `app://`, `capacitor://`, or perhaps `file://`
+	 * @returns On failure, a {@link HtmlAssistantFileNotFoundError} if it thinks the a given local file doesn't exist; otherwise a normal Error.
 	 */
-	private static async createBlobObjectUrl(src: string): Promise<string | Error> {
+	private static async createBlobObjectUrl(src: string): Promise<BlobUrl | Error> {
 		let response;
 
 		try {
@@ -292,8 +328,8 @@ export class HtmlAssistant {
 			try {
 				const blob = await response.blob()
 				const url = URL.createObjectURL(blob);
-				if (url && URL.canParse(url) && Url.isBlob("blob:"))
-					return url;
+				if (url && URL.canParse(url) && Url.isBlob(url))
+					return Url.toBlobUrl(url);
 				else
 					return new Error(`Invalid blob URL: ${url}`);
 			} catch (error) {
@@ -303,6 +339,20 @@ export class HtmlAssistant {
 		else {
 			return new Error(`Unsuccessful response: ${response.status} ${response.statusText}`);
 		}
+	}
+
+	/**
+	 * Creates a blob URL from raw bytes.
+	 *
+	 * @param bytes
+	 * @param type The content type of {@link bytes}, e.g., `image/png`.
+	 * @throws Never. Even if {@link bytes} doesn't represent an image. Will fail later at consumption.
+	 * @returns A string containing an object URL that can be used to reference the contents of the specified source object.
+	 */
+	public static createBlobObjectUrlFromBytes(bytes: ArrayBuffer, type?: string): BlobUrl {
+		Env.log.d(Env.dev.icon.DEBUG, Env.dev.thunkedStr(() => `HtmlAssistant:createBlobObjectUrlFromBytes: type: ${type}`));
+
+		return URL.createObjectURL(new Blob([bytes], type ? { type } : undefined)) as BlobUrl;
 	}
 
 	private static setIcon(imageElement: HTMLImageElement, blob: Blob) {
@@ -329,7 +379,7 @@ export class HtmlAssistant {
 
 	private static get failedIcon(): Blob {
 		if (this.failedIconBacking === undefined) {
-			const icon = ObsAssistant.getIcon("image", { color: "#ff0000",  fallbackIconID: "bug" }); // image-off
+			const icon = ObsAssistant.getIcon("image", { color: "#ff0000", fallbackIconID: "bug" }); // image-off
 			this.failedIconBacking = new Blob([icon!.outerHTML], { type: "image/svg+xml" });
 		}
 		return this.failedIconBacking;

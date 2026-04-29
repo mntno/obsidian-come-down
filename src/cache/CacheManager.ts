@@ -2,6 +2,7 @@ import { CacheMetadata, CacheMetadataImage, CacheRetainer, CacheRoot, CacheType,
 import { Env } from "Env";
 import { imageSize } from "image-size";
 import { normalizePath, requestUrl, Vault } from "obsidian";
+import { FileInfo } from "types";
 import { Logger } from "utils/Logger";
 import { Url } from "utils/Url";
 import { Err } from "utils/ts";
@@ -92,7 +93,7 @@ export class CacheFetchError extends CacheError {
 			} else if (error instanceof URIError) {
 				Env.log.e("Invalid URL provided.");
 			} else if (error.message && error.message.includes("net::ERR_INTERNET_DISCONNECTED")) {
-				Env.log.e("Network error: Could not connect to the server.");
+				Env.log.i("No internet connection", error);
 				this.isRetryable = true;
 				this.isInternetDisconnected = true;
 			} else {
@@ -110,11 +111,6 @@ export interface CacheInfo {
 	numberOfFilesCached: number;
 	numberOfActualFilesWithoutAssociatedCacheKey: number;
 	numberOfCacheKeysWithoutAssociatedFile: number;
-}
-
-interface FileInfo {
-	filename: string;
-	extension: string;
 }
 
 /** Use with {@link CacheManager.registerMetadataChanged} */
@@ -552,16 +548,36 @@ export class CacheManager {
 		if (!this.cacheInitiated)
 			await this.initCache()
 
-		cacheKey = cacheKey ?? CacheManager.createCacheKeyFromRequest(request);
-		const metadata = this.cache[cacheKey];
+		const resolvedCacheKey = cacheKey ?? CacheManager.createCacheKeyFromRequest(request);
+		const metadata = this.cache[resolvedCacheKey];
 		if (metadata) {
 			if (ignoreMissingFile || await this.vault.adapter.exists(this.filePathToCachedFileFromMetadata(metadata), true))
-				return new CacheResult(request, cacheKey, this.createCacheItem(metadata, true), null, ignoreMissingFile ? undefined : true);
+				return new CacheResult(request, resolvedCacheKey, this.createCacheItem(metadata, true), null, ignoreMissingFile ? undefined : true);
 			else
-				return new CacheResult(request, cacheKey, null, new CacheNotFoundError(cacheKey), false);
+				return new CacheResult(request, resolvedCacheKey, null, new CacheNotFoundError(resolvedCacheKey), false);
 		}
 
-		return new CacheResult(request, cacheKey, null, new CacheNotFoundError(cacheKey), undefined);
+		return new CacheResult(request, resolvedCacheKey, null, new CacheNotFoundError(resolvedCacheKey), undefined);
+	}
+
+	/**
+	 * Reads the cached file associated with {@link source} from disk.
+	 *
+	 * @param source The original external URL of the cached resource.
+	 * @returns The file's bytes and content type, or an {@link Error} if the cache item or file doesn't exist.
+	 */
+	public async readCachedFile(source: string): Promise<{ bytes: ArrayBuffer, type?: string } | Error> {
+		const cacheKey = CacheManager.createCacheKeyFromOriginalSrc(source);
+		const result = await this.existingCache(CacheManager.createReadOnlyRequest(source), true);
+		if (result.item === null)
+			return new CacheNotFoundError(cacheKey);
+
+		try {
+			const bytes = await this.vault.adapter.readBinary(this.filePathToCachedFileFromMetadata(result.item.metadata));
+			return { bytes, type: result.item.metadata.f.ct };
+		} catch (error) {
+			return Err.toError(error);
+		}
 	}
 
 	/**
@@ -583,22 +599,22 @@ export class CacheManager {
 	 * @param callback
 	 * @returns
 	 */
-	public async getCache(request: CacheRequest, force: boolean, callback: (result: CacheResult) => void): Promise<void> {
+	public async getCache(request: CacheRequest, force: boolean, callback: (result: CacheResult) => Promise<void>): Promise<void> {
 		if (!this.cacheInitiated)
 			await this.initCache();
 
 		const validationError = this.validateRequest(request);
 		if (validationError) {
-			callback(new CacheResult(request, CacheManager.createCacheKeyFromRequest(request), null, validationError));
+			await callback(new CacheResult(request, CacheManager.createCacheKeyFromRequest(request), null, validationError));
 			return;
 		}
 
 		const download = async () => {
-			const sourceFileInfo = Url.extractFilenameAndExtension(request.source) as FileInfo | null;
+			const sourceFileInfo = Url.extractFilenameAndExtension(request.source);
 			if (!sourceFileInfo)
-				callback(new CacheResult(request, CacheManager.createCacheKeyFromRequest(request), null, new Error(`Failed to extract fileInfo from source url.`)));
+				await callback(new CacheResult(request, CacheManager.createCacheKeyFromRequest(request), null, new Error(`Failed to extract fileInfo from source url.`)));
 			else
-				callback(await this.fetchNewCache(request, sourceFileInfo));
+				await callback(await this.fetchNewCache(request, sourceFileInfo));
 		};
 
 		if (force) {
@@ -615,7 +631,7 @@ export class CacheManager {
 		const result = await this.existingCache(request);
 		if (result.item) {
 			Env.log.cm(Env.dev.icon.CACHE_MANAGER, `CacheManager:getCache\n\tGot cache for cacheKey: ${result.cacheKey}`);
-			callback(result);
+			await callback(result);
 		}
 		else {
 			await download();
@@ -693,7 +709,7 @@ export class CacheManager {
 		if (metadataFileExists) {
 			const metadataFileContent: string = await this.vault.adapter.read(this.metadataFilePath);
 			try {
-				this.metadataRoot = Object.assign({}, EMPTY_CACHE_ROOT, JSON.parse(metadataFileContent));
+				this.metadataRoot = Object.assign({}, EMPTY_CACHE_ROOT, JSON.parse(metadataFileContent) as CacheRoot);
 				await this.updateMetadataFileLastModified();
 			} catch (error) {
 				Env.log.e("Failed to read metadata. Clearing cache.", error);
@@ -701,7 +717,7 @@ export class CacheManager {
 			}
 		}
 		else {
-			this.resetMetadata();
+			await this.resetMetadata();
 		}
 	}
 
@@ -796,8 +812,8 @@ export class CacheManager {
 	* Aborts all current download requests.
 	* @todo
 	*/
-	async cancelAllOngoing() {
-		await sleep(100);
+	public async cancelAllOngoing() {
+		await sleep(10);
 	}
 
 	public static createCacheKeyFromOriginalSrc(src: string) {

@@ -21,10 +21,10 @@ export class ObsAssistant {
 	/** Internal API */
 	public static containerElFromPostProcessorContext(postProcessorContext: MarkdownPostProcessorContext) {
 		Env.assert("containerEl" in postProcessorContext, "MarkdownPostProcessorContext does not have `containerEl`");
-		// @ts-expect-error
-		const containerEl = postProcessorContext.containerEl;
+		// @ts-expect-error -- Property 'containerEl' does not exist on type 'MarkdownPostProcessorContext'.
+		const containerEl = postProcessorContext.containerEl as HTMLElement | null;
 		if (containerEl)
-			return containerEl as HTMLElement;
+			return containerEl;
 		else
 			return null;
 	}
@@ -197,8 +197,8 @@ export class ObsAssistant {
 	}
 
 	/** @returns If {@link view} extends {@link FileView}, returns the {@link TFile}. */
-	public static getFileFromView(view?: View | null | undefined): TFile | null {
-		if (view === null || view === undefined)
+	public static getFileFromView(view: View | null): TFile | null {
+		if (view === null)
 			return null;
 		// if (view instanceof MarkdownView)
 		// 	return view.file;
@@ -220,7 +220,7 @@ export class ObsAssistant {
 
 	public static getIcon(iconID: string, options?: { el?: HTMLElement, color?: string, fallbackColor?: string, fallbackIconID?: string }): SVGSVGElement | null {
 		const {
-			el = document.body,
+			el = activeDocument.body,
 			color,
 			fallbackColor = "#919191",
 			fallbackIconID,

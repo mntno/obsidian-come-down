@@ -42,8 +42,8 @@ export class ProcessingPass {
 
 			cacheManager.updateRetainedCaches(Object.values(this.requestsToRetain), this.ctx.associatedFile.path, options).then(() => {
 				this.ctx.logr.log(this.ctx.logr.msg("\tCalling saveMetadataIfDirty"));
-				cacheManager.saveMetadataIfDirty();
-			});
+				cacheManager.saveMetadataIfDirty()?.catch(Env.catch);
+			}).catch(Env.catch);
 		}
 	}
 
@@ -235,7 +235,7 @@ export class ProcessingPass {
 		Env.log.d("ProcessingPass:filterIrrelevantCacheStates");
 		const state = HtmlAssistant.cacheState(imageElement)
 
-		// return HtmlAssistant.isCacheStateEqual(state, [HTMLElementCacheState.ORIGINAL, HTMLElementCacheState.ORIGINAL_SRC_REMOVED, HTMLElementCacheState.CACHE_FAILED]);
+		// return HtmlAssistant.isCacheStateEqual(state, [HTMLElementCacheState.ORIGINAL, HTMLElementCacheState.SRC_REMOVED, HTMLElementCacheState.CACHE_FAILED]);
 
 		// Difference between this and the above is that ORIGINAL matches all unprocessed elements.
 		return !HtmlAssistant.isCacheStateEqual(state,
