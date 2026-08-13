@@ -1,4 +1,5 @@
 import { Env } from "Env";
+import { log } from "utils/log";
 import { ObsAssistant } from "utils/ObsAssistant";
 import { Err } from "utils/ts";
 import { BlobUrl, Url } from "utils/Url";
@@ -174,16 +175,19 @@ export class HtmlAssistant {
 	}
 
 	public static setLoading(imageElement: HTMLImageElement) {
+		log.proc.t();
 		HtmlAssistant.setCacheState(imageElement, HTMLElementCacheState.REQUESTING_DOWNLOADING);
 		HtmlAssistant.setIcon(imageElement, HtmlAssistant.loadingIcon);
 	}
 
 	public static setFailed(element: HTMLImageElement, readOnlyAccess = false) {
+		log.proc.t();
 		HtmlAssistant.setCacheState(element, HTMLElementCacheState.CACHE_FAILED);
 		HtmlAssistant.setIcon(element, readOnlyAccess ? HtmlAssistant.readOnlyIcon : HtmlAssistant.failedIcon);
 	}
 
 	public static setInvalid(element: HTMLImageElement) {
+		log.proc.t();
 		HtmlAssistant.setCacheState(element, HTMLElementCacheState.INVALID);
 		HtmlAssistant.setIcon(element, HtmlAssistant.failedIcon);
 	}
@@ -192,6 +196,7 @@ export class HtmlAssistant {
 	 * The {@link placeholderIcon} is set on the {@link element}.
 	 */
 	public static setCanceled(element: HTMLImageElement) {
+		log.proc.t();
 		HtmlAssistant.setCacheState(element, HTMLElementCacheState.SRC_REMOVED);
 		HtmlAssistant.setIcon(element, HtmlAssistant.placeholderIcon);
 	}
@@ -281,7 +286,7 @@ export class HtmlAssistant {
 		* @returns
 		*/
 	public static findAllImageElements(element: HTMLElement, requireSrcAttribute: boolean = true, filter?: (imageElement: HTMLImageElement) => boolean): HTMLImageElement[] {
-		Env.log.d(Env.dev.icon.DEBUG, Env.dev.thunkedStr(() => `HtmlAssistant:findAllImageElements: ${element.tagName} .${[...element.classList].join('.')}, requireSrcAttribute: ${requireSrcAttribute}`));
+		log.proc.t(Env.dev.thunkedStr(() => `${element.tagName} .${[...element.classList].join('.')}, requireSrcAttribute: ${requireSrcAttribute}`));
 
 		let imageElements;
 		if (requireSrcAttribute)

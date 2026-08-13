@@ -4,8 +4,8 @@ import { imageSize } from "image-size";
 import { normalizePath, requestUrl, Vault } from "obsidian";
 import { FileInfo } from "types";
 import { Logger } from "utils/Logger";
-import { Url } from "utils/Url";
 import { Err } from "utils/ts";
+import { Url } from "utils/Url";
 import xxhash, { XXHashAPI } from "xxhash-wasm";
 
 
@@ -862,15 +862,14 @@ export class CacheManager {
 	//   return normalizePath(`${this.cacheDir}/${CacheManager.createCacheKey(request)}.json`);
 	// }
 
-	private filePathToCachedFile(request: CacheRequest, extension: string) {
-		return normalizePath(`${this.cacheDir}/${CacheManager.createCacheKeyFromRequest(request)}${extension.length > 0 ? `.${extension}` : ``}`);
-	}
-
 	public filePathToCachedFileFromMetadata(metadata: CacheMetadata, cacheKey?: string) {
 		return normalizePath(`${this.cacheDir}/${this.nameOfCachedFileFromMetadata(metadata, cacheKey)}`);
 	}
 
 	/**
+	 * Returns the filename as it is stored on the server as far as what was determined after downloaded.
+	 * Note, that does not regard whether the extension could be determined from the raw data in {@link handleImage}.
+	 * Generated on the fly images, eg, could thus be considered having no file extension.
 	 *
 	 * @param metadata
 	 * @param cacheKey Supply the cache key if you have it to avoid generating it again.
@@ -924,20 +923,6 @@ export class CacheManager {
 			const bytes = new Uint8Array(response.arrayBuffer);
 			const imageMetadata = this.handleImage(bytes); // Will throw if what was downloaded isn't a supported image type. This is checked before the file is written.
 			const nowDateString = new Date().toISOString();
-			const cacheItemPath = this.filePathToCachedFile(request, fileInfo.extension);
-
-			try {
-				await this.vault.adapter.writeBinary(cacheItemPath, response.arrayBuffer);
-			}
-			catch (writeError) {
-				try {
-					await this.vault.adapter.remove(cacheItemPath);
-				} catch (removeError) {
-					if (Env.isDev)
-						Env.log.e("Failed to remove cached file after write error:", removeError);
-				}
-				throw writeError;
-			}
 
 			const metadata = {
 				ty: CacheType.IMAGE,
@@ -958,6 +943,21 @@ export class CacheManager {
 				},
 				i: imageMetadata
 			} satisfies CacheMetadata;
+
+			const cacheItemPath = this.filePathToCachedFileFromMetadata(metadata, cacheKey);
+
+			try {
+				await this.vault.adapter.writeBinary(cacheItemPath, response.arrayBuffer);
+			}
+			catch (writeError) {
+				try {
+					await this.vault.adapter.remove(cacheItemPath);
+				} catch (removeError) {
+					if (Env.isDev)
+						Env.log.e("Failed to remove cached file after write error:", removeError);
+				}
+				throw writeError;
+			}
 
 			try {
 				this.metadataRoot.items[cacheKey] = metadata

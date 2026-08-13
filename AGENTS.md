@@ -3,7 +3,7 @@
 ## Project overview
 
 - Target: Obsidian Community Plugin (TypeScript → bundled JavaScript).
-- Entry point: `main.ts` compiled to `main.js` and loaded by Obsidian.
+- Entry point: `src/main.ts` compiled to `main.js` and loaded by Obsidian.
 - Required release artifacts: `main.js`, `manifest.json`, and optional `styles.css`.
 
 ## Environment & tooling
@@ -29,11 +29,22 @@ pnpm run dev
 
 ### Production build
 
-Use this when verifying changes.
-
 ```bash
 pnpm run build
 ```
+
+## Linting
+
+- ESLint is preconfigured with `eslint-plugin-obsidianmd` for Obsidian-specific rules.
+- Run `pnpm run lint` to lint the project.
+
+## File & folder conventions
+
+- **Organize code into multiple files**: Split functionality across separate modules rather than putting everything in `main.ts`.
+- Source lives in `src/`. Keep `main.ts` small and focused on plugin lifecycle (loading, unloading, registering commands).
+- **Do not commit build artifacts**: Never commit `node_modules/`, `main.js`, or other generated files to version control.
+- Keep the plugin small. Avoid large dependencies. Prefer browser-compatible packages.
+- Generated output should be placed at the plugin root or `dist/` depending on your build setup. Release artifacts must end up at the top level of the plugin folder in the vault (`main.js`, `manifest.json`, `styles.css`).
 
 ## Manifest rules (`manifest.json`)
 
@@ -49,6 +60,12 @@ pnpm run build
 - Keep `minAppVersion` accurate when using newer APIs.
 - Canonical requirements are coded here: https://github.com/obsidianmd/obsidian-releases/blob/master/.github/workflows/validate-plugin-entry.yml
 
+## Commands & settings
+
+- Any user-facing commands should be added via `this.addCommand(...)`.
+- If the plugin has configuration, provide a settings tab and sensible defaults.
+- Persist settings using `this.loadData()` / `this.saveData()`.
+- Use stable command IDs; avoid renaming once released.
 
 ## Versioning & releases
 
@@ -104,22 +121,111 @@ Follow Obsidian's **Developer Policies** and **Plugin Guidelines**. In particula
 ## Agent do/don't
 
 **Do**
+
+- Add commands with stable IDs (don't rename once released).
+- Provide defaults and validation in settings.
 - Write idempotent code paths so reload/unload doesn't leak listeners or intervals.
 - Use `this.register*` helpers for everything that needs cleanup.
+- Preserve all existing comments, documentation, JSDoc blocks, and TODOs when modifying files.
 
 **Don't**
+
 - Introduce network calls without an obvious user-facing reason and documentation.
 - Ship features that require cloud services without clear disclosure and explicit opt-in.
 - Store or transmit vault contents unless essential and consented.
 
 ## Common tasks
 
+### Organize code across multiple files
+
+**main.ts** (minimal, lifecycle only):
+
+```ts
+import { Plugin } from 'obsidian';
+import { MySettings, DEFAULT_SETTINGS } from './settings';
+import { registerCommands } from './commands';
+
+export default class MyPlugin extends Plugin {
+	settings!: MySettings;
+
+	async onload() {
+		this.settings = Object.assign(
+			{},
+			DEFAULT_SETTINGS,
+			(await this.loadData()) as Partial<MySettings>,
+		);
+		registerCommands(this);
+	}
+}
+```
+
+**settings.ts**:
+
+```ts
+export interface MySettings {
+	enabled: boolean;
+	apiKey: string;
+}
+
+export const DEFAULT_SETTINGS: MySettings = {
+	enabled: true,
+	apiKey: '',
+};
+```
+
+**commands/index.ts**:
+
+```ts
+import { Plugin } from 'obsidian';
+import { doSomething } from './my-command';
+
+export function registerCommands(plugin: Plugin) {
+	plugin.addCommand({
+		id: 'do-something',
+		name: 'Do something',
+		callback: () => doSomething(plugin),
+	});
+}
+```
+
+### Add a command
+
+```ts
+this.addCommand({
+	id: 'your-command-id',
+	name: 'Do the thing',
+	callback: () => this.doTheThing(),
+});
+```
+
+### Persist settings
+
+```ts
+interface MySettings { enabled: boolean }
+const DEFAULT_SETTINGS: MySettings = { enabled: true };
+
+async onload() {
+  this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<MySettings>);
+  await this.saveData(this.settings);
+}
+```
+
 ### Register listeners safely
 
 ```ts
-this.registerEvent(this.app.workspace.on("file-open", f => { /* ... */ }));
-this.registerDomEvent(window, "resize", () => { /* ... */ });
-this.registerInterval(window.setInterval(() => { /* ... */ }, 1000));
+this.registerEvent(
+	this.app.workspace.on('file-open', (f) => {
+		/* ... */
+	}),
+);
+this.registerDomEvent(activeWindow, 'resize', () => {
+	/* ... */
+});
+this.registerInterval(
+	window.setInterval(() => {
+		/* ... */
+	}, 1000),
+);
 ```
 
 ## Troubleshooting

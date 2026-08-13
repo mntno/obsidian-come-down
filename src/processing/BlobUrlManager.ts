@@ -1,6 +1,7 @@
 import { Env } from "Env";
 import { HtmlAssistant } from "processing/HtmlAssistant";
-import { Url, BlobUrl } from "utils/Url";
+import { log } from "utils/log";
+import { BlobUrl, Url } from "utils/Url";
 
 
 export class BlobUrlManager {
@@ -9,7 +10,7 @@ export class BlobUrlManager {
 	private containerBlobs = new Map<HTMLElement, Set<BlobUrl>>();
 
 	public registerInitialBlob(blobUrl: BlobUrl, originalSrc: string): void {
-		Env.log.d(Env.dev.icon.DEBUG, Env.dev.thunkedStr(() => `BlobUrlManager:registerInitialBlob: \n\tblob: ${blobUrl}, \n\toriginal: ${originalSrc}`));
+		log.proc.t(Env.dev.thunkedStr(() => `BlobUrlManager:registerInitialBlob: \n\tblob: ${blobUrl}, \n\toriginal: ${originalSrc}`));
 
 		this.blobUrlToSourceUrl.set(blobUrl, originalSrc);
 	}
@@ -28,12 +29,12 @@ export class BlobUrlManager {
 	}
 
 	public async createContainerBlobs(container: HTMLElement, resolveBlobUrl: (source: string) => Promise<BlobUrl | Error>): Promise<void> {
-		Env.log.d(Env.dev.icon.DEBUG, Env.dev.thunkedStr(() => `BlobUrlManager:createContainerBlobs: ${container.tagName} .${[...container.classList].join('.')}`));
+		log.proc.d(Env.dev.thunkedStr(() => `${container.tagName} .${[...container.classList].join('.')}`));
 
 		const imgs = HtmlAssistant.findAllImageElements(container);
 
-		Env.log.d(Env.dev.icon.DEBUG, Env.dev.thunkedStr(() => {
-			const lines = [`\t${imgs.length} images found`];
+		log.proc.d(Env.dev.thunkedStr(() => {
+			const lines = [`${imgs.length} images found`];
 			imgs.forEach(img => lines.push(`\t\t${img.src}`));
 			return lines.join('\n');
 		}));
@@ -73,7 +74,7 @@ export class BlobUrlManager {
 	}
 
 	public revokeContainerBlobs(container: HTMLElement): void {
-		Env.log.d(Env.dev.icon.DEBUG, Env.dev.thunkedStr(() => `BlobUrlManager:revokeContainerBlobs: ${container.tagName} .${[...container.classList].join('.')}`));
+		log.proc.t(Env.dev.thunkedStr(() => `BlobUrlManager:revokeContainerBlobs: ${container.tagName} .${[...container.classList].join('.')}`));
 		const blobs = this.containerBlobs.get(container);
 		if (blobs !== undefined) {
 			for (const blobUrl of blobs)

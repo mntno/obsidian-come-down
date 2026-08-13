@@ -1,7 +1,7 @@
 // https://typescript-eslint.io/packages/typescript-eslint#usage
 import eslint from "@eslint/js";
 import obsidianmd from "eslint-plugin-obsidianmd";
-import { defineConfig } from 'eslint/config';
+import { defineConfig } from "eslint/config";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 
@@ -13,7 +13,8 @@ export default defineConfig(
 	{
 		ignores: [
 			"**/dev-vault/**",
-			"**/dist/**"
+			"**/dist/**",
+			"**/temp/**",
 		],
 	},
 	eslint.configs.recommended,
@@ -33,7 +34,9 @@ export default defineConfig(
 		languageOptions: {
 			parser: tseslint.parser,
 			parserOptions: {
-				projectService: true,
+				projectService: {
+					allowDefaultProject: ["vitest.config.ts", "vitest.setup.ts"],
+				},
 				sourceType: "module",
 				ecmaVersion: 2022,
 			},

@@ -1,6 +1,7 @@
 import { ViewUpdate } from "@codemirror/view";
 import { Env } from "Env";
 import { HtmlAssistant, HTMLElementCacheState } from "processing/HtmlAssistant";
+import { log } from "utils/log";
 import { Url } from "utils/Url";
 
 export class Workarounds {
@@ -26,6 +27,7 @@ export class Workarounds {
 		* @returns The URLs of `img` elements in the DOM that should be ignored or `null` if there are none.
 		*/
 	public static detectSourcesOfInvalidImageElements(update: ViewUpdate) {
+		log.workaround.t();
 		if (update.changes.empty)
 			return null;
 
@@ -38,8 +40,8 @@ export class Workarounds {
 			const line = doc.lineAt(cursorStartPos);
 			const modifiedLine = doc.sliceString(line.from, line.to) + "\n";
 
-			Env.log.workaround(Env.dev.icon.WORKAROUND, Env.dev.thunkedStr(() => `Text was inserted at pos ${cursorStartPos} - ${cursorEndPosition}: "${insertedText}"`));
-			Env.log.workaround(Env.dev.icon.WORKAROUND, Env.dev.thunkedStr(() => `This line was modified: "${modifiedLine}", match: ${this.embeddedImageRegex.test(modifiedLine)}`));
+			log.workaround.d(Env.dev.thunkedStr(() => `Text was inserted at pos ${cursorStartPos} - ${cursorEndPosition}: "${insertedText}"`));
+			log.workaround.d(Env.dev.thunkedStr(() => `This line was modified: "${modifiedLine}", match: ${this.embeddedImageRegex.test(modifiedLine)}`));
 
 			if (this.embeddedImageRegex.test(modifiedLine)) {
 
@@ -47,13 +49,13 @@ export class Workarounds {
 				const textAfterCursor = doc.sliceString(cursorEndPosition);
 				const match = this.markdownLinkRegex.exec(textAfterCursor);
 
-				//Env.log.d(`Text after: ${textAfterCursor}`);
+				//log.workaround.d(`Text after: ${textAfterCursor}`);
 
 				if (match) {
 					const linkUrl = match[1];
 					Env.dev.assert(linkUrl !== undefined && linkUrl.length > 0);
 					if (linkUrl !== undefined && linkUrl.length > 0) {
-						Env.log.workaround(Env.dev.icon.WORKAROUND, Env.dev.thunkedStr(() => `Found image src to ignore: ${linkUrl}`));
+						log.workaround.i(Env.dev.thunkedStr(() => `Found image src to ignore: ${linkUrl}`));
 
 						// The image element is only inserted when the link protocol is recognized, i.e.,
 						// when it begins with `http:`, `https:`, `ftp:`, `ws:`, or `wss:`.
@@ -94,6 +96,7 @@ export class Workarounds {
 		* @returns `false` when the {@link imageElement}'s state was set to {@link HTMLElementCacheState.INVALID} and should be filtered out of furter processing.
 		*/
 	public static handleInvalidImageElements(sourcesToIgnore: string[] | null, imageElement: HTMLImageElement, src: string): boolean {
+		log.workaround.t(src);
 		if (sourcesToIgnore) {
 			for (const sourceToIgnore of sourcesToIgnore) {
 				if (Url.trimBackslash(sourceToIgnore) === Url.trimBackslash(src)) {

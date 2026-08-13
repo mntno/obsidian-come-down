@@ -1,11 +1,19 @@
 
 export const Arr = {
 	firstOrNull: <T>(a: Array<T>): T | null => a.first() ?? null,
-};
+} as const;
+
+export const Bln = {
+	is: (value: unknown): value is boolean => typeof value === "boolean",
+	/** @returns `true` if {@link value} is a `boolean` and its value is `true`. */
+	isTrue: (value: unknown): value is boolean => Bln.is(value) && value === true,
+	/** @returns `true` if {@link value} is a `boolean` and its value is `false`. */
+	isFalse: (value: unknown): value is boolean => Bln.is(value) && value === false,
+} as const;
 
 export const Err = {
 	toError: (e: unknown): Error => e instanceof Error ? e : new Error(String(e)),
-};
+} as const;
 
 export const Obj = {
 	/**
@@ -19,7 +27,7 @@ export const Obj = {
 	},
 
 	try: <T extends object>(value: unknown): T | null => Obj.is(value) ? value as T : null,
-};
+} as const;
 
 export const Str = {
 	empty: "",
@@ -40,4 +48,4 @@ export const Str = {
 		* @returns `true` if `value` is a string with at least one character, otherwise `false`.
 		*/
 	isNonEmpty: (value: unknown): value is string => typeof value === "string" && value !== Str.empty,
-};
+} as const;

@@ -1,7 +1,7 @@
 import { Env } from "Env";
 import { App, FileView, getIcon, ItemView, MarkdownPostProcessorContext, MarkdownView, TextFileView, TFile, View } from "obsidian";
 import { Prettify } from "types";
-import { childEl, firstChildEl, firstParentEl } from "utils/dom";
+import { childEl, firstChildEl, firstParentEl, isDescendantOrEqual } from "utils/dom";
 
 export type ObsViewMode = "none" | "reader" | "preview" | "source";
 
@@ -208,14 +208,18 @@ export class ObsAssistant {
 	}
 
 	/**
-		* Gets the view of the specified type that is currently marked as the workspace’s
-		* active view. This is usually the view inside the leaf that receives commands
-		* and hotkeys.
+		* Finds the {@link View} that owns the given DOM element by checking all markdown
+		* workspace leaves.
 		*
-		* @returns The active {@link View} instance, or `null` if no matching view is the workspace’s active view.
+		* @returns The {@link View} whose {@link View#containerEl} is an ancestor of {@link element},
+		*          or `null` if no matching view is found.
 		*/
-	public static getActiveView(app: App): View | null {
-		return app.workspace.getActiveViewOfType(View);
+	public static findViewForElement(app: App, element: HTMLElement): View | null {
+		for (const leaf of app.workspace.getLeavesOfType(ViewType.Markdown)) {
+			if (isDescendantOrEqual(leaf.view.containerEl, element))
+				return leaf.view;
+		}
+		return null;
 	}
 
 	public static getIcon(iconID: string, options?: { el?: HTMLElement, color?: string, fallbackColor?: string, fallbackIconID?: string }): SVGSVGElement | null {
@@ -275,4 +279,8 @@ const Attributes = {
 		DATA_TYPE: "data-type",
 		DATA_MODE: "data-mode",
 	}
-}
+} as const;
+
+const ViewType = {
+	Markdown: "markdown",
+} as const;

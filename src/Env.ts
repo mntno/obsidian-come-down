@@ -33,8 +33,6 @@ const _DevContext = {
 		DEBUGGING: true,
 		EDIT_UPDATE_PASS: true,
 		POST_PROCESS_PASS: true,
-		WORKAROUNDS: true,
-		OBSERVER: true,
 	} as const,
 
 	icon: {
@@ -42,8 +40,6 @@ const _DevContext = {
 		CACHE_MANAGER: "📦",
 		EDIT_UPDATE_PASS: "✏️",
 		POST_PROCESS_PASS: "📖",
-		WORKAROUND: "🔧",
-		OBSERVER: "👁️",
 	} as const,
 };
 const DevContext: Readonly<typeof _DevContext> = _DevContext;
@@ -59,8 +55,6 @@ const _log = {
 	edit: gate(_DevContext.logCategory.EDIT_UPDATE_PASS),
 	read: gate(_DevContext.logCategory.POST_PROCESS_PASS),
 	cm: gate(_DevContext.logCategory.CACHE_MANAGER),
-	workaround: gate(_DevContext.logCategory.WORKAROUNDS),
-	observer: gate(_DevContext.logCategory.OBSERVER),
 };
 const log: Readonly<typeof _log> = _log;
 

@@ -1,6 +1,6 @@
 import { ViewUpdate } from "@codemirror/view";
 import { Env } from "Env";
-import { App, ItemView, MarkdownPostProcessorContext, MarkdownView, TFile, View } from "obsidian";
+import { App, editorInfoField, ItemView, MarkdownFileInfo, MarkdownPostProcessorContext, MarkdownView, TFile, View } from "obsidian";
 import { Logger } from "processing/Logger";
 import { ObsAssistant, ObsViewMode } from "utils/ObsAssistant";
 import { isDescendantOrEqual } from "utils/dom";
@@ -67,9 +67,18 @@ export class ProcessingContext {
 		const contentEl = viewUpdate.view.contentDOM;
 		let viewContainerEl: HTMLElement | null = null;
 
-		const view = ProcessingContext.tryGetViewInstance(app, contentEl);
-		if (view)
-			viewContainerEl = view.containerEl;
+		const info: MarkdownFileInfo | undefined = viewUpdate.state.field(editorInfoField, false);
+		let view: View | null = null;
+
+		if (info instanceof MarkdownView) { // As of 1.13, `MarkdownView` is the only implementer of `MarkdownFileInfo`.
+			view = info;
+			viewContainerEl = info.containerEl;
+		}
+		else {
+			view = ObsAssistant.findViewForElement(app, contentEl);
+			if (view !== null)
+				viewContainerEl = view.containerEl;
+		}
 
 		// No view, get the container by traversing up.
 		if (viewContainerEl === null)
@@ -77,8 +86,8 @@ export class ProcessingContext {
 
 		const viewingMode = ProcessingContext.tryGetViewingMode(view ?? undefined, viewContainerEl ?? undefined);
 
-		let associatedFile: TFile | null = null;
-		if (view !== null)
+		let associatedFile: TFile | null = info !== undefined && info.file !== null ? info.file : null;
+		if (associatedFile === null && view !== null)
 			associatedFile = ObsAssistant.getFileFromView(view);
 
 		return new ProcessingContext(logger, view, viewingMode, viewContainerEl, associatedFile, new ViewUpdateContext(viewUpdate, view));
@@ -101,7 +110,7 @@ export class ProcessingContext {
 
 		let viewContainerEl: HTMLElement | null = null;
 
-		const view = ProcessingContext.tryGetViewInstance(app, element);
+		const view = ObsAssistant.findViewForElement(app, element);
 		if (view)
 			viewContainerEl = view.containerEl;
 
@@ -184,17 +193,6 @@ export class ProcessingContext {
 
 	public get isInPostProcessingPass() {
 		return this.ppCtx !== null;
-	}
-
-	/**
-		* @remarks The workspace's active view, if any, is not necessarily the where to current processing occurs.
-		*
-		* @param element The view container (or a child element) which content is currently being processed.
-		* @returns The active {@link View} instance if its `containerEl` is equal to {@link element}
-		*/
-	private static tryGetViewInstance(app: App, element: HTMLElement) {
-		const activeView = ObsAssistant.getActiveView(app);
-		return activeView !== null && isDescendantOrEqual(activeView.containerEl, element) ? activeView : null;
 	}
 
 	/** Will try by using {@link view} first; if fails, will try {@link viewContainerEl}. */

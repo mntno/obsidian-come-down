@@ -12,9 +12,10 @@ import { Prettify } from "types";
 import { InfoModal } from "ui/InfoModal";
 import { Notice } from "ui/Notice";
 import { SettingTab } from "ui/SettingTab";
-import { ContainerObserver } from "utils/ContainerObserver";
+import { ContainerObserver, ContainerObserverOptions } from "utils/ContainerObserver";
 import { queueAsyncMicrotask, sleep } from "utils/dom";
 import { File } from "utils/File";
+import { log } from "utils/log";
 import { Obj } from "utils/ts";
 import { BlobUrl } from "utils/Url";
 
@@ -31,11 +32,12 @@ export default class ComeDownPlugin extends Plugin {
 	private data!: PluginData;
 	private settingsManager!: SettingsManager;
 	private cacheManager!: CacheManager;
-	private containerObserver!: ContainerObserver;
+	private containerObservers = new Map<Document, ContainerObserver>();
+	private containerObserverOptions!: Omit<ContainerObserverOptions, "target">;
 	private blobUrlManager = new BlobUrlManager();
 
 	override async onload() {
-		Env.log.d("Plugin:onload");
+		log.t();
 
 		Notice.setName(this.manifest.name);
 
@@ -51,7 +53,7 @@ export default class ComeDownPlugin extends Plugin {
 			async (_settings) => await this.saveData(this.data),
 			(name) => {
 				if (name === SettingsManager.SETTING_NAME.gitIgnoreCacheDir)
-					this.ensureGitIgnore().catch(Env.catch);
+					this.ensureGitIgnore().catch(log.catch);
 			}
 		);
 		this.addSettingTab(new SettingTab(this, this.settingsManager, this.cacheManager));
@@ -67,7 +69,7 @@ export default class ComeDownPlugin extends Plugin {
 		this.registerEvent(
 			this.app.vault.on('delete', (file) => {
 				if (file instanceof TFile) {
-					this.cacheManager.removeRetainer(file.path).then(() => this.cacheManager.saveMetadataIfDirty()).catch(Env.catch);
+					this.cacheManager.removeRetainer(file.path).then(() => this.cacheManager.saveMetadataIfDirty()).catch(log.catch);
 				}
 			})
 		);
@@ -76,12 +78,12 @@ export default class ComeDownPlugin extends Plugin {
 			this.app.vault.on('rename', (file, oldPath) => {
 				if (file instanceof TFile) {
 					this.cacheManager.renameRetainer(oldPath, file.path);
-					this.cacheManager.saveMetadataIfDirty()?.catch(Env.catch);
+					this.cacheManager.saveMetadataIfDirty()?.catch(log.catch);
 				}
 			})
 		);
 
-		this.containerObserver = new ContainerObserver({
+		this.containerObserverOptions = {
 			selectors: [".lightbox"],
 			onAdded: (container) => {
 				this.blobUrlManager.createContainerBlobs(container, async (source) => {
@@ -94,46 +96,71 @@ export default class ComeDownPlugin extends Plugin {
 			},
 			onRemoved: (container) => {
 				this.blobUrlManager.revokeContainerBlobs(container);
-			}
-		});
-		this.containerObserver.startObserving();
+			},
+		};
+
+		this.addContainerObserver(document);
+
+		// The close callback is called twice.
+		this.registerEvent(this.app.workspace.on("window-open", (_, win) => this.addContainerObserver(win.document)));
+		this.registerEvent(this.app.workspace.on("window-close", (_, win) => this.removeContainerObserver(win.document)));
 
 		this.app.workspace.onLayoutReady(() => {
 			window.setTimeout(() => void this.removeSyncConflictFiles(), 1000);
 			this.registerInterval(window.setInterval(() => void this.cacheManager.checkIfMetadataFileChangedExternally().catch(Env.log.e), 1000 * 60 * 10));
-
-			if (Env.isDev) {
-				this.addCommand({
-					id: "open-info-modal",
-					name: "Cacheboard",
-					callback: () => {
-						this.cacheManager.checkIfMetadataFileChangedExternally()
-							.then(() => new InfoModal(this.app, this.cacheManager, this.settingsManager.settings).open())
-							.catch(Env.log.e);
-					}
-				});
-
-				this.addCommand({
-					id: "delete-all-cache-and-reload",
-					name: "Delete cache and reload",
-					callback: () => {
-						void this.cacheManager.clearCached((error) => {
-							if (error)
-								Env.log.e("Failed to clear cache", error);
-							else
-								Env.clearBrowserCache(this.app);
-						});
-					}
-				});
-			}
 		});
+
+		if (Env.isDev) {
+			this.addCommand({
+				id: "open-info-modal",
+				name: "Cacheboard",
+				callback: () => {
+					this.cacheManager.checkIfMetadataFileChangedExternally()
+						.then(() => new InfoModal(this.app, this.cacheManager, this.settingsManager.settings).open())
+						.catch(Env.log.e);
+				}
+			});
+
+			this.addCommand({
+				id: "delete-all-cache-and-reload",
+				name: "Delete cache and reload",
+				callback: () => {
+					void this.cacheManager.clearCached((error) => {
+						if (error)
+							Env.log.e("Failed to clear cache", error);
+						else
+							Env.clearBrowserCache(this.app);
+					});
+				}
+			});
+		}
 	}
 
 	public override onunload() {
-		Env.log.d("Plugin:onunload");
-		this.containerObserver.endObserving();
+		log.t();
+
+		for (const observer of this.containerObservers.keys())
+			this.removeContainerObserver(observer);
+		this.containerObservers.clear();
+
 		this.blobUrlManager.revokeAll();
 		this.cacheManager.cancelAllOngoing().catch(Env.catch);
+	}
+
+	private addContainerObserver(doc: Document): ContainerObserver {
+		log.t();
+		const observer = new ContainerObserver({ ...this.containerObserverOptions, target: doc.body });
+		this.containerObservers.set(doc, observer);
+		return observer;
+	}
+
+	private removeContainerObserver(doc: Document) {
+		log.t();
+		const observer = this.containerObservers.get(doc);
+		if (observer) {
+			observer.endObserving();
+			this.containerObservers.delete(doc);
+		}
 	}
 
 	override onExternalSettingsChange() {
@@ -579,7 +606,7 @@ export default class ComeDownPlugin extends Plugin {
 					}
 				}
 				else {
-					Env.log.e(`Image element does not have a source. Omitting.`)
+					Env.log.e(`Image element does not have an external source. Omitting.`, imageElement)
 					HtmlAssistant.setInvalid(imageElement);
 				}
 			});
